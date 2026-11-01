@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Privacy · ctx{% endblock %}
+{% block body %}
+<h1>Privacy</h1>
+<p><strong>What we store.</strong> Your email address and name from the sign-in provider you
+choose (Google or GitHub), and the repositories you create: the task-state items you or your
+AI assistant commit, their history, and an audit log of how each commit was processed.
+Uploaded chat exports are kept for at most 30 days.</p>
+<p><strong>Who processes it.</strong> To detect duplicates and contradictions, item text is
+sent to Google Cloud Vertex AI (embedding and language models). Repository owners can turn
+this off per repository. Data is stored on Google Cloud in the region this service runs in.</p>
+<p><strong>Who can see it.</strong> Only people you share a repository with, in the role you
+give them. Stored content is never sold or used for advertising.</p>
+<p><strong>Deleting it.</strong> Deleting a repository permanently removes its items, history,
+audit log and uploads. To delete your account, contact the operator of this service.</p>
+<p><a class="btn" href="/">Back</a></p>
+{% endblock %}

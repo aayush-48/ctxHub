@@ -1,0 +1,44 @@
+name: Evals (real models)
+
+# Runs every eval suite, including handoff fidelity, against Vertex AI. Manual, because it
+# spends model quota. Uses the same keyless identity as deploys.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases per suite
+        default: "40"
+      budget:
+        description: Token budget for handoff
+        default: "600"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    env:
+      CTX_GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      CTX_VERTEX_LOCATION: ${{ vars.VERTEX_LOCATION || 'us-central1' }}
+      CTX_EMBEDDING_PROVIDER: vertex
+      CTX_ARBITER_PROVIDER: vertex_gemini
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.28"
+      - run: uv sync --python 3.12 --frozen
+      - run: >
+          uv run python -m evals.run --real --suites all --n ${{ inputs.cases }}
+          --budget ${{ inputs.budget }} --out evals/results/real.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-real
+          path: evals/results/real.json

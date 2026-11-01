@@ -1,0 +1,4 @@
+[
+  {"type": "decision", "subject": "Primary datastore", "content": "Use Firestore.",
+   "reason": "Serverless and no instance to manage"}
+]

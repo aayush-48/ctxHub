@@ -1,0 +1,12 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+web/dist
+server/src/ctx_server/static/app
+infra/.terraform
+infra/*.tfstate*
+.env
+*.log
+evals/results

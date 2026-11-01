@@ -1,0 +1,31 @@
+[tool.uv.workspace]
+members = ["server", "cli"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "testcontainers[postgres]>=4.8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "respx>=0.21",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+# `ruff format` owns line length; long SQL string literals are left intact.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["server/tests", "cli/tests"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typed parameter declarations for MCP tools and FastAPI routes.
+extend-immutable-calls = ["pydantic.Field", "fastapi.Query", "fastapi.File", "fastapi.Form", "fastapi.Header", "fastapi.Depends"]

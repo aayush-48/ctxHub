@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+web/dist/
+server/src/ctx_server/static/app/
+.env
+infra/.terraform/
+infra/*.tfstate*
+infra/terraform.tfvars
+evals/results/
+*.log
+

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Sign in · ctx{% endblock %}
+{% block body %}
+<h1>Sign in</h1>
+<p>{{ client_name }} wants to use your ctx repositories.</p>
+{% if google %}<a class="btn" href="/auth/google/start?req={{ req | urlencode }}">Continue with Google</a>{% endif %}
+{% if github %}<a class="btn" href="/auth/github/start?req={{ req | urlencode }}">Continue with GitHub</a>{% endif %}
+{% if not google and not github and not dev_login %}
+<p>No sign-in method is configured on this server.</p>
+{% endif %}
+{% if dev_login %}
+<hr>
+<form method="post" action="/auth/dev">
+  <input type="hidden" name="req" value="{{ req }}">
+  <input type="email" name="email" placeholder="you@example.com" required>
+  <button class="btn" type="submit">Development sign-in</button>
+  <div class="muted">Development only. Disabled in production.</div>
+</form>
+{% endif %}
+{% endblock %}

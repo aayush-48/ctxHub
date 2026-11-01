@@ -1,0 +1,10 @@
+[
+  {"type": "goal", "subject": "MVP", "content": "Ship a CLI MVP before the next sprint."},
+  {"type": "constraint", "subject": "Hosting", "content": "Must run on GCP; no paid vector DB."},
+  {"type": "decision", "subject": "Primary datastore", "content": "Use a separate vector DB.",
+   "reason": "Fast similarity search"},
+  {"type": "open_question", "subject": "ChatGPT write tools",
+   "content": "Does ChatGPT allow write tools over MCP?"},
+  {"type": "fact", "subject": "Deploy region", "content": "Cloud Run region is asia-south1."},
+  {"type": "task", "subject": "Merge base", "content": "Write the merge-base query."}
+]

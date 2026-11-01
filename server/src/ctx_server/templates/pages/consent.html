@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Allow access · ctx{% endblock %}
+{% block body %}
+<h1>Allow {{ client_name }}?</h1>
+<p>It will be able to read and change the ctx repositories you can access, as
+<strong>{{ user.email }}</strong>. You'll be sent back to <strong>{{ redirect_host }}</strong>.</p>
+<form method="post" action="/consent">
+  <input type="hidden" name="req" value="{{ req }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="row">
+    <button class="btn" type="submit" name="decision" value="deny">Deny</button>
+    <button class="btn primary" type="submit" name="decision" value="approve">Allow</button>
+  </div>
+</form>
+<form method="post" action="/logout"><button class="btn" style="margin-top:14px;border:0" type="submit">
+  <span class="muted">Not you? Sign out</span></button></form>
+{% endblock %}

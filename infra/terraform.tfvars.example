@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+project_id = "your-project-id"
+region     = "asia-south1"
+
+# From APIs & Services > Credentials > OAuth client ID (type: Web application).
+google_oauth_client_id     = ""
+google_oauth_client_secret = ""
+
+# Optional second sign-in method: GitHub > Settings > Developer settings > OAuth Apps.
+github_oauth_client_id     = ""
+github_oauth_client_secret = ""
+
+# owner/name, to let GitHub Actions deploy without keys. Leave empty to deploy by hand.
+github_repo = ""

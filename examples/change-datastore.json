@@ -1,0 +1,5 @@
+[
+  {"type": "decision", "subject": "Primary datastore", "content": "Use Cloud SQL Postgres with pgvector.",
+   "reason": "One database for state and vectors"},
+  {"type": "fact", "subject": "Deploy region", "content": "Cloud Run region is asia-south1."}
+]
