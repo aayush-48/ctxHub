@@ -27,7 +27,7 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="session")
 def server_url():
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.community.postgres import PostgresContainer
 
     with PostgresContainer("pgvector/pgvector:pg16", driver="asyncpg") as pg:
         port = _free_port()

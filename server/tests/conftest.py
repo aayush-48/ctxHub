@@ -21,7 +21,7 @@ os.environ.update(
 
 import pytest  # noqa: E402
 from ctx_server.config import get_settings  # noqa: E402
-from testcontainers.postgres import PostgresContainer  # noqa: E402
+from testcontainers.community.postgres import PostgresContainer  # noqa: E402
 
 
 @pytest.fixture(scope="session")

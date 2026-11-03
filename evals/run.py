@@ -390,7 +390,7 @@ def main() -> None:
 
     with ExitStack() as stack:
         if not os.environ.get("CTX_DATABASE_URL"):
-            from testcontainers.postgres import PostgresContainer
+            from testcontainers.community.postgres import PostgresContainer
 
             pg = stack.enter_context(PostgresContainer("pgvector/pgvector:pg16", driver="asyncpg"))
             os.environ["CTX_DATABASE_URL"] = pg.get_connection_url()

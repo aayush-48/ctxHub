@@ -234,7 +234,8 @@ async def test_full_flow_rest_and_mcp(client):
     )
     [contents] = res["result"]["contents"]
     assert contents["mimeType"] == "text/html;profile=mcp-app"
-    assert "<html" in contents["text"].lower()
+    # The built view, or the placeholder served when web/ was not built (as in CI).
+    assert contents["text"].lower().startswith("<!doctype html")
 
     # Domain errors come back as tool errors the model can read.
     res = await mcp_call(
