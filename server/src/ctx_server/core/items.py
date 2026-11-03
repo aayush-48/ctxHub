@@ -29,22 +29,19 @@ def importance(
     *,
     age_days: float = 0.0,
     use_count: int = 0,
-    llm_score: float | None = None,
     pinned: bool = False,
 ) -> float:
-    """importance = w_t*typeWeight + w_r*recency + w_u*useCount + w_l*llmScore, normalized
+    """importance = w_t*typeWeight + w_r*recency + w_u*useCount, normalized
     to 0..1 by the weight sum. Pinned items get the maximum."""
     if pinned:
         return 1.0
     recency = 0.5 ** (max(age_days, 0.0) / settings.recency_half_life_days)
     use = min(1.0, math.log1p(use_count) / math.log1p(20))
-    llm = 0.5 if llm_score is None else llm_score
-    total = settings.w_type + settings.w_recency + settings.w_use + settings.w_llm
+    total = settings.w_type + settings.w_recency + settings.w_use
     score = (
         settings.w_type * TYPE_WEIGHT.get(item_type, 0.5)
         + settings.w_recency * recency
         + settings.w_use * use
-        + settings.w_llm * llm
     )
     return score / total if total else 0.5
 

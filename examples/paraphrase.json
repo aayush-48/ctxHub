@@ -1,0 +1,4 @@
+[
+  {"type": "constraint", "subject": "Hosting",
+   "content": "Everything has to run on Google Cloud, and we can't pay for a vector database."}
+]

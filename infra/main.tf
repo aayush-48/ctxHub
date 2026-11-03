@@ -322,14 +322,6 @@ resource "google_cloud_run_v2_service" "ctx" {
           CTX_VERTEX_LOCATION         = var.vertex_location
           CTX_EMBEDDING_PROVIDER      = "vertex"
           CTX_EMBEDDING_MODEL         = var.embedding_model
-          CTX_ARBITER_PROVIDER        = var.arbiter_provider
-          CTX_ARBITER_MODEL           = var.arbiter_model
-          CTX_ARBITER_LOCATION        = var.arbiter_location
-          CTX_STORAGE_PROVIDER        = "gcs"
-          CTX_GCS_BUCKET              = google_storage_bucket.uploads.name
-          CTX_TASKS_PROVIDER          = "cloud_tasks"
-          CTX_TASKS_QUEUE             = google_cloud_tasks_queue.jobs.id
-          CTX_TASKS_SERVICE_ACCOUNT   = google_service_account.tasks.email
           CTX_OTEL_ENABLED            = "true"
           CTX_GOOGLE_CLIENT_ID        = var.google_oauth_client_id
           CTX_GITHUB_CLIENT_ID        = var.github_oauth_client_id

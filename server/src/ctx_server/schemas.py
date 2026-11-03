@@ -109,7 +109,6 @@ class RepoCreateIn(_Strict):
 class RepoSettingsIn(_Strict):
     auto_commit_additive: bool | None = None
     auto_merge_additive: bool | None = None
-    llm_enabled: bool | None = None
 
 
 class BranchCreateIn(_Strict):

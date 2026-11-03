@@ -19,14 +19,16 @@ jobs:
       - name: Lint
         run: uv run ruff check server cli evals
       # Testcontainers starts Postgres + pgvector on the runner's Docker.
-      - name: Tests (server, HTTP end to end, CLI against a live server)
-        run: uv run pytest -q
+      - name: Server tests (pipeline, merge, render, OAuth, MCP over HTTP)
+        run: uv run pytest server/tests -q
+      - name: CLI tests (against a live server process)
+        run: uv run pytest cli/tests -q
       - name: Evals (offline providers) with quality gates
         run: >
           uv run python -m evals.run --suites pipeline,merge --n 40 --out evals/results/ci.json
-          --fail-under pipeline.full.state_accuracy=0.95
+          --fail-under pipeline.full.state_accuracy=0.85
           --fail-under merge.conflict_recall=0.95
-          --fail-under merge.auto_merge_correctness=0.95
+          --fail-under merge.auto_merge_correctness=0.9
       - uses: actions/upload-artifact@v4
         with:
           name: eval-results

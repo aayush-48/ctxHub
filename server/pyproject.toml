@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.8",
     "pydantic-settings>=2.4",
-    "sqlalchemy[asyncio]>=2.0.30",
+    "sqlalchemy[asyncio]>=2.0.30,<2.1",  # OpenTelemetry instrumentation supports < 2.1
     "asyncpg>=0.29",
     "alembic>=1.13",
     "pgvector>=0.3",
@@ -17,10 +17,8 @@ dependencies = [
     "jinja2>=3.1",
     "tiktoken>=0.7",
     "google-genai>=1.0",
-    "google-cloud-storage>=2.18",
-    "google-cloud-tasks>=2.16",
     "google-auth>=2.30",
-    "anthropic[vertex]>=0.40",
+    "anthropic>=0.40",
     "python-multipart>=0.0.9",
     "itsdangerous>=2.2",
     "opentelemetry-sdk>=1.26",
@@ -29,10 +27,12 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
     "opentelemetry-instrumentation-httpx>=0.47b0",
     "numpy>=1.26",
+    "onnxruntime>=1.31.1",
+    "tokenizers>=0.23.3",
+    "huggingface-hub>=2.4.0",
 ]
 
 [project.optional-dependencies]
-nli = ["sentence-transformers>=3.0"]
 local-embeddings = ["sentence-transformers>=3.0"]
 
 [build-system]

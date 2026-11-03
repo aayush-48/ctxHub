@@ -15,11 +15,9 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    LargeBinary,
     SmallInteger,
     String,
     Text,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -51,7 +49,7 @@ class User(Base):
 
 class Repo(Base):
     __tablename__ = "repos"
-    __table_args__ = (UniqueConstraint("owner_id", "name"),)
+    # Names are unique across all owners (case-insensitively; see migration 0002).
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     name: Mapped[str] = mapped_column(Text)
@@ -224,36 +222,6 @@ class PipelineAudit(Base):
     decision: Mapped[str] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class Upload(Base):
-    __tablename__ = "uploads"
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
-    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"))
-    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
-    branch: Mapped[str] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(Text)  # claude_export, chatgpt_export
-    filename: Mapped[str | None] = mapped_column(Text)
-    size_bytes: Mapped[int] = mapped_column(BigInteger)
-    gcs_uri: Mapped[str | None] = mapped_column(Text)
-    content: Mapped[bytes | None] = mapped_column(LargeBinary)  # when storage_provider == db
-    conversation: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(Text, default="queued")  # queued, running, done, failed
-    error: Mapped[str | None] = mapped_column(Text)
-    proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class Job(Base):
-    __tablename__ = "jobs"
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
-    kind: Mapped[str] = mapped_column(Text)
-    payload: Mapped[dict[str, Any]] = mapped_column()
-    status: Mapped[str] = mapped_column(Text, default="queued")
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class OAuthClient(Base):

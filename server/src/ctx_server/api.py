@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from . import ratelimit, service, tasks
+from . import ratelimit, service
 from .auth.provider import provider
-from .config import get_settings
-from .errors import CtxError, Forbidden, ValidationFailed
+from .errors import CtxError
 from .schemas import (
     BranchCreateIn,
     CommitIn,
@@ -78,11 +76,6 @@ async def me(actor: Light) -> dict[str, Any]:
     return await service.get_user(actor.id)
 
 
-@router.get("/repos")
-async def list_repos(actor: Light) -> list[dict[str, Any]]:
-    return await service.list_repos(actor)
-
-
 @router.post("/repos", status_code=201)
 async def create_repo(actor: Light, body: RepoCreateIn) -> dict[str, Any]:
     return await service.create_repo(actor, body)
@@ -130,6 +123,15 @@ async def items(
     actor: Light, repo: str, ref: str | None = None, all: bool = False
 ) -> dict[str, Any]:
     return await service.list_items(actor, repo, ref, include_inactive=all)
+
+
+class PinIn(BaseModel):
+    pinned: bool = True
+
+
+@router.post("/repos/{repo}/items/{item}/pin")
+async def pin(actor: Light, repo: str, item: str, body: PinIn) -> dict[str, Any]:
+    return await service.set_pin(actor, repo, item, body.pinned)
 
 
 @router.post("/commits")
@@ -236,58 +238,3 @@ async def abort(actor: Light, merge_id: uuid.UUID) -> dict[str, Any]:
 @router.post("/repos/{repo}/pull")
 async def pull(actor: Heavy, repo: str, body: PullIn) -> dict[str, Any]:
     return await service.pull(actor, repo, body)
-
-
-@router.post("/repos/{repo}/imports", status_code=202)
-async def start_import(
-    actor: Heavy,
-    repo: str,
-    file: Annotated[UploadFile, File()],
-    conversation: Annotated[str | None, Form()] = None,
-    branch: Annotated[str | None, Form()] = None,
-) -> dict[str, Any]:
-    limit = get_settings().max_upload_bytes
-    data = await file.read(limit + 1)
-    if len(data) > limit:
-        raise ValidationFailed(f"upload exceeds {limit} bytes")
-    return await service.start_import(actor, repo, data, file.filename, conversation, branch)
-
-
-@router.get("/imports/{upload_id}")
-async def get_import(actor: Light, upload_id: uuid.UUID) -> dict[str, Any]:
-    return await service.get_import(actor, upload_id)
-
-
-# -- internal: Cloud Tasks callback
-
-internal = APIRouter(include_in_schema=False)
-
-
-async def _verify_tasks_oidc(authorization: str | None) -> None:
-    s = get_settings()
-    if s.tasks_provider != "cloud_tasks":
-        raise Forbidden("task callbacks are disabled")
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise Unauthorized("missing OIDC token")
-    from google.auth.transport import requests as g_requests
-    from google.oauth2 import id_token
-
-    try:
-        claims = await asyncio.to_thread(
-            id_token.verify_oauth2_token,
-            authorization[7:],
-            g_requests.Request(),
-            s.public_base_url.rstrip("/"),
-        )
-    except ValueError as e:
-        raise Unauthorized(f"invalid OIDC token: {e}") from e
-    if claims.get("email") != s.tasks_service_account or not claims.get("email_verified"):
-        raise Forbidden("task callback from an unexpected identity")
-
-
-@internal.post("/internal/tasks/{job_id}")
-async def run_task(
-    job_id: uuid.UUID, authorization: Annotated[str | None, Header()] = None
-) -> dict[str, str]:
-    await _verify_tasks_oidc(authorization)
-    return {"status": await tasks.run_job(job_id)}

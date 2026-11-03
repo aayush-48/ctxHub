@@ -78,13 +78,3 @@ class Client:
 
     def delete(self, path: str) -> Any:
         return self.request("DELETE", path)
-
-    def resolve_repo(self, repo: str) -> str:
-        """REST paths take a repo id or name; map "<owner email>/<name>" to an id."""
-        if "/" not in repo:
-            return repo
-        owner, name = repo.rsplit("/", 1)
-        for r in self.get("/repos"):
-            if r["name"] == name and (r.get("owner") or "").lower() == owner.lower():
-                return r["id"]
-        raise ApiError(404, {"message": f"repo {repo!r} not found"})

@@ -5,6 +5,7 @@
 **/node_modules
 web/dist
 server/src/ctx_server/static/app
+server/src/ctx_server/static/mcp_app
 infra/.terraform
 infra/*.tfstate*
 .env

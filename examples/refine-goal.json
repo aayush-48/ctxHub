@@ -1,0 +1,4 @@
+[
+  {"type": "goal", "subject": "MVP",
+   "content": "Ship a CLI MVP with branch and merge support before the next sprint."}
+]

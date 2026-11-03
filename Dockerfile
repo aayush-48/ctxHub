@@ -16,25 +16,30 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/srv/.venv \
     PATH="/srv/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 WORKDIR /srv
 
-# Set WITH_NLI=true to bundle the NLI cross-encoder prefilter (adds PyTorch, ~1 GB).
-ARG WITH_NLI=false
-
 # Dependencies first, for layer caching.
 COPY pyproject.toml uv.lock ./
 COPY server/pyproject.toml server/pyproject.toml
 COPY cli/pyproject.toml cli/pyproject.toml
-RUN uv sync --frozen --no-dev --package ctx-server --no-install-workspace \
-      $( [ "$WITH_NLI" = "true" ] && echo "--extra nli" )
+RUN uv sync --frozen --no-dev --package ctx-server --no-install-workspace
+
+# The local NLI model (int8 ONNX build of cross-encoder/nli-deberta-v3-small, Apache-2.0,
+# about 170 MB) is baked into the image so the service never downloads it at runtime.
+ARG NLI_REPO=cross-encoder/nli-deberta-v3-small
+ARG NLI_FILE=onnx/model_quint8_avx2.onnx
+COPY server/scripts/fetch_nli_model.py /tmp/fetch_nli_model.py
+RUN HF_HOME=/tmp/hf python /tmp/fetch_nli_model.py "$NLI_REPO" "$NLI_FILE" /srv/models/nli \
+    && rm -rf /tmp/hf /tmp/fetch_nli_model.py
 
 COPY server/ server/
 COPY cli/ cli/
 COPY --from=web /build/server/src/ctx_server/static/app server/src/ctx_server/static/app
-RUN uv sync --frozen --no-dev --package ctx-server \
-      $( [ "$WITH_NLI" = "true" ] && echo "--extra nli" )
+COPY --from=web /build/server/src/ctx_server/static/mcp_app server/src/ctx_server/static/mcp_app
+RUN uv sync --frozen --no-dev --package ctx-server
 
 RUN useradd --system --uid 10001 ctx && mkdir -p /home/ctx && chown ctx /home/ctx
 USER ctx
-ENV HOME=/home/ctx CTX_ENV=prod PORT=8080
+ENV HOME=/home/ctx CTX_ENV=prod PORT=8080 \
+    CTX_NLI_ENABLED=true CTX_NLI_MODEL_DIR=/srv/models/nli
 EXPOSE 8080
 # Cloud Run sets PORT and terminates TLS in front of the container.
 CMD ["sh", "-c", "exec uvicorn ctx_server.app:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*' --timeout-graceful-shutdown 20"]

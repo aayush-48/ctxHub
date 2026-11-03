@@ -63,6 +63,11 @@ class _Line:
     item: SnapItem | None = None
     form: str = "full"  # full, compressed
 
+    @property
+    def protected(self) -> bool:
+        """Constraints and pinned items are compressed if needed but never silently dropped."""
+        return self.kind in PROTECTED or bool(self.item and self.item.pinned)
+
 
 @dataclass
 class RenderResult:
@@ -91,7 +96,6 @@ def _item_lines(settings: Settings, snap: Snapshot) -> list[_Line]:
             i.type,
             age_days=age,
             use_count=i.use_count,
-            llm_score=i.llm_score,
             pinned=i.pinned,
         )
         tag = f" [id:{i.item_key.hex[:8]}]"
@@ -187,15 +191,15 @@ async def render(
                 selected.append(ln)
                 remaining -= short_cost
                 continue
-        if ln.kind in PROTECTED and not allow_drop_constraints:
+        if ln.protected and not allow_drop_constraints:
             protected_needed += counter.estimate(esc(ln.short or ln.full), family) + 4
             continue
         dropped.append(ln)
 
     if protected_needed:
         raise ValidationFailed(
-            "token budget too small to keep every constraint; raise the budget or pass "
-            "allow_drop_constraints",
+            "token budget too small to keep every constraint and pinned item; raise the budget, "
+            "unpin items, or pass allow_drop_constraints",
             {"budget": budget, "additional_tokens_needed": protected_needed - remaining},
         )
 
@@ -203,7 +207,7 @@ async def render(
     text = build(selected, dropped)
     tokens, exact = await counter.exact(text, family)
     while tokens > budget and selected:
-        victims = [ln for ln in selected if allow_drop_constraints or ln.kind not in PROTECTED]
+        victims = [ln for ln in selected if allow_drop_constraints or not ln.protected]
         if not victims:
             break
         victim = max(victims, key=lambda ln: (TIER[ln.kind], -ln.importance))
@@ -218,7 +222,21 @@ async def render(
     def ref(ln: _Line) -> dict[str, Any]:
         if ln.item is None:
             return {"type": "conflict_warning", "text": ln.full}
-        return {"item_key": str(ln.item.item_key), "type": ln.kind, "subject": ln.item.subject}
+        return {
+            "item_key": str(ln.item.item_key),
+            "type": ln.kind,
+            "subject": ln.item.subject,
+            "pinned": ln.item.pinned,
+        }
+
+    def item_row(ln: _Line, state: str) -> dict[str, Any]:
+        assert ln.item is not None
+        return {
+            **ref(ln),
+            "content": ln.item.content,
+            "importance": round(ln.importance, 3),
+            "state": state,  # full, compressed, dropped
+        }
 
     manifest = {
         "repo": repo,
@@ -233,6 +251,9 @@ async def render(
         "included": len(selected),
         "compressed": [ref(ln) for ln in selected if ln.form == "compressed"],
         "dropped": [ref(ln) for ln in dropped],
+        # Every active item and what happened to it, in render order (for the pull view).
+        "items": [item_row(ln, ln.form) for ln in selected if ln.item is not None]
+        + [item_row(ln, "dropped") for ln in dropped if ln.item is not None],
         "used_item_ids": [str(ln.item.id) for ln in selected if ln.item is not None],
     }
     return RenderResult(text=text, manifest=manifest)

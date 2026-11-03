@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Branch, type Commit, type Item, type Repo } from "./api";
+import { api, ApiError, type Branch, type Commit, type Item } from "./api";
 import { handleCallback, logout } from "./auth";
 import { Graph } from "./Graph";
 
@@ -58,7 +58,8 @@ export function App() {
   const m = path.match(/^\/app\/r\/([^/?]+)/);
   return (
     <Shell email={me.email} onHome={() => go("/app/")}>
-      {m ? <RepoView repo={decodeURIComponent(m[1])} /> : <RepoList open={(id) => go(`/app/r/${id}`)} />}
+      {m ? <RepoView repo={decodeURIComponent(m[1])} />
+        : <OpenRepo open={(name) => go(`/app/r/${encodeURIComponent(name)}`)} />}
     </Shell>
   );
 }
@@ -80,29 +81,58 @@ function Shell(props: { email?: string; onHome?: () => void; children: React.Rea
   );
 }
 
-function RepoList({ open }: { open: (id: string) => void }) {
-  const [repos, error] = useLoad<Repo[]>(() => api("/repos"), []);
-  if (error) return <div className="error">{error}</div>;
-  if (!repos) return <div className="empty">Loading…</div>;
+// Repos opened in this browser, newest first. A per-browser convenience only.
+const RECENT_KEY = "ctx.recentRepos";
+
+function recentRepos(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function rememberRepo(name: string) {
+  try {
+    const next = [name, ...recentRepos().filter((n) => n.toLowerCase() !== name.toLowerCase())];
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, 8)));
+  } catch {
+    /* storage unavailable: nothing to remember */
+  }
+}
+
+function OpenRepo({ open }: { open: (name: string) => void }) {
+  const [name, setName] = useState("");
+  const recent = recentRepos();
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name.trim()) open(name.trim());
+  };
   return (
     <section>
-      <h1>Repositories</h1>
-      {repos.length === 0 ? (
-        <div className="empty">
-          No repositories yet. Create one from a chat (“create a ctx repo called my-project”) or
-          with <code>ctx init my-project</code>.
-        </div>
-      ) : (
-        <div className="cards">
-          {repos.map((r) => (
-            <button key={r.id} className="card repo" onClick={() => open(r.id)}>
-              <strong>{r.name}</strong>
-              <span className="muted">{r.owner} · {r.role}</span>
-              {r.description && <span>{r.description}</span>}
-            </button>
-          ))}
-        </div>
+      <h1>Open a repository</h1>
+      <p className="muted">Enter the name of a repository you own or that was shared with you.</p>
+      <form className="share" onSubmit={submit}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project"
+               aria-label="Repository name" autoFocus />
+        <button type="submit" className="primary">Open</button>
+      </form>
+      {recent.length > 0 && (
+        <>
+          <h3>Recently opened</h3>
+          <div className="cards">
+            {recent.map((r) => (
+              <button key={r} className="card repo" onClick={() => open(r)}>
+                <strong>{r}</strong>
+              </button>
+            ))}
+          </div>
+        </>
       )}
+      <p className="muted small">
+        Create a repository from a chat (“create a ctx repo called my-project”) or with
+        <code> ctx init my-project</code>.
+      </p>
     </section>
   );
 }
@@ -111,7 +141,8 @@ type Tab = "history" | "state" | "merges" | "members";
 
 function RepoView({ repo }: { repo: string }) {
   const [tab, setTab] = useState<Tab>("history");
-  const [info, error] = useLoad<any>(() => api(`/repos/${repo}`), [repo]);
+  const [info, error] = useLoad<any>(() => api(`/repos/${encodeURIComponent(repo)}`), [repo]);
+  useEffect(() => { if (info) rememberRepo(info.name); }, [info]);
   if (error) return <div className="error">{error}</div>;
   if (!info) return <div className="empty">Loading…</div>;
   return (

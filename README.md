@@ -41,8 +41,10 @@ CLI), and from a web viewer.
 ## How it works
 
 - **Commits are cleaned before they are stored.** Each commit runs through a pipeline: validate →
-  normalize → embed → dedupe → classify relations (LLM arbiter) → supersede → score importance →
-  compress. The result is a *proposed diff*. Nothing is written until you confirm it, except
+  normalize → embed → dedupe → classify relations → supersede → score importance → compress.
+  The server never calls a language model: your own chat model (Claude, ChatGPT…) extracts the
+  items, and the server checks them with embeddings, rules and a small local NLI model,
+  flagging anything it is unsure about for you. The result is a *proposed diff*. Nothing is written until you confirm it, except
   diffs that only add items, which can commit automatically.
 - **History is never rewritten.** A replaced item is closed and linked to its replacement, and a
   revert is itself a new commit. Every pipeline decision is recorded in an audit log.
@@ -81,20 +83,20 @@ that writes commits, and Postgres is the single source of truth.
         │  renderer → version engine                        │
         └───┬───────────────┬───────────────┬───────────────┘
             ▼               ▼               ▼
-     Cloud SQL Postgres   Vertex AI      Cloud Storage + Cloud Tasks
-     + pgvector           (embeddings,   (export uploads, background
-     (private IP)         Gemini)        import jobs)
+     Cloud SQL Postgres     Vertex AI          local NLI model
+     + pgvector             (embeddings only)  (ONNX, in the container;
+     (private IP)                              no API calls)
 ```
 
 | Layer | Technology |
 |---|---|
 | Server | Python 3.12, FastAPI, Pydantic v2, official MCP Python SDK (Streamable HTTP) |
 | Database | PostgreSQL 16 + pgvector (HNSW), SQLAlchemy 2 (async), Alembic |
-| AI | Vertex AI `gemini-embedding-001` (768 dims) and `gemini-3-flash-preview` as arbiter |
+| AI | Vertex AI `gemini-embedding-001` (768 dims) for embeddings; a local int8 ONNX build of `cross-encoder/nli-deberta-v3-small` for entailment and contradiction checks. No generative model on the server. |
 | Auth | OAuth 2.1 with PKCE and dynamic client registration; Google or GitHub sign-in |
 | CLI | Typer, httpx, Rich |
 | Web viewer | React 18, TypeScript, Vite |
-| Infra | Cloud Run, Cloud SQL, Secret Manager, Cloud Storage, Cloud Tasks, Artifact Registry, Terraform |
+| Infra | Cloud Run, Cloud SQL, Secret Manager, Artifact Registry, Terraform |
 | Observability | Structured JSON logs (Cloud Logging), OpenTelemetry traces (Cloud Trace) |
 | CI/CD | GitHub Actions, keyless deploys via Workload Identity Federation |
 
@@ -105,8 +107,8 @@ Studio key, local sentence-transformers, or offline fakes for tests.
 
 ```
 server/      FastAPI app: REST API, MCP server, OAuth server, pipeline, merge, renderer
-  src/ctx_server/core/        version engine: pipeline, merge, render, graph, imports
-  src/ctx_server/providers/   embeddings, LLM arbiter, NLI, tokenizers, storage
+  src/ctx_server/core/        version engine: pipeline, relation rules, merge, render, graph
+  src/ctx_server/providers/   embeddings, local NLI model, tokenizers, retries
   src/ctx_server/auth/        OAuth provider and sign-in pages
   src/ctx_server/migrations/  database schema (Alembic)
   tests/                      unit, database and HTTP end-to-end tests
@@ -162,7 +164,7 @@ including the free trial. In short:
 
 ## Connect a chat app
 
-The MCP endpoint is `https://<your-service>/mcp`.
+The MCP endpoint is `https://ctx-910037083701.asia-south1.run.app/mcp`.
 
 - **Claude:** Settings → Connectors → *Add custom connector* → paste the URL → sign in and allow.
 - **ChatGPT:** Settings → Apps & Connectors → developer mode → create a connector with the URL.
@@ -179,13 +181,31 @@ Then ask the model things like:
 
 | MCP tool | Does |
 |---|---|
-| `ctx_repos`, `ctx_init` | List and create repositories |
+| `ctx_init` | Create a repository (names are globally unique) |
 | `ctx_status`, `ctx_log`, `ctx_diff` | Inspect state and history |
 | `ctx_commit`, `ctx_confirm` | Propose a commit, then write it after you agree |
 | `ctx_branch`, `ctx_checkout` | Branch and move |
 | `ctx_merge` (start / complete / abort), `ctx_resolve` | Semantic merge and conflict resolution |
 | `ctx_pull` | Render state for a model within a token budget |
+| `ctx_pin` | Pin an item so renders never drop it (no commit) |
 | `ctx_revert` | Undo a commit with a new commit |
+
+### In-chat views (MCP Apps)
+
+In clients that support [MCP Apps](https://modelcontextprotocol.io/specification/draft/extensions/apps)
+(Claude on the web and desktop, ChatGPT, VS Code), these tools open an interactive view inside the chat:
+
+| View | Opens on | What you can do |
+|---|---|---|
+| Commit review | `ctx_commit` | Untick entries, choose keep/replace/skip for flagged ones, Confirm or Discard |
+| Status | `ctx_status` | Counts by type, pending merges (open the resolver), jump to history or pull |
+| History | `ctx_log` | Commit graph with branches and merges; click a commit for its diff and pipeline decisions |
+| Diff | `ctx_diff` | Changes between two refs; pick other refs to compare |
+| Conflict resolver | `ctx_merge`, `ctx_resolve` | Original, this branch and incoming side by side; keep either, both, or edit; complete or abort |
+| Pull and budget | `ctx_pull` | Budget slider, target model, pin/unpin items, see what is compressed or dropped, copy or use in this chat |
+
+Every button calls the same tools, so the model stays informed: the view also tells the model what
+you decided. Clients without MCP Apps get the same results as text.
 
 The server also provides two MCP prompts, *Commit this conversation* and *Load context*, for
 clients that show MCP prompts.
@@ -203,20 +223,20 @@ ctx login https://<your-service>
 | Command | Does |
 |---|---|
 | `ctx login [URL]`, `ctx logout`, `ctx whoami` | Browser sign-in (OAuth + PKCE, loopback redirect) |
-| `ctx repos`, `ctx init <repo>`, `ctx use <repo>` | List, create, and pick the default repo |
+| `ctx init <repo>`, `ctx use <repo>` | Create a repo (names are globally unique) and pick the default repo |
 | `ctx commit -m <msg> -f items.json [--yes] [--no-auto]` | Commit items from a file; shows the diff and asks to confirm |
 | `ctx confirm <proposal> [--accept e1,e2] [--choice e3=drop]` | Confirm a pending proposal |
-| `ctx import <export.zip> [-c <conversation>]` | Extract state from a Claude or ChatGPT data export |
 | `ctx status`, `ctx items [--all]` | Current branch, counts, items |
 | `ctx log [--all] [-n N]`, `ctx diff <a> [b]`, `ctx show [ref] [--audit]` | History, diffs, pipeline decisions |
 | `ctx branch [name] [--from ref] [-d]`, `ctx checkout <ref>` | Branch and move |
 | `ctx merge <branch> [--review]`, `ctx merge --continue`, `ctx merge --abort` | Merge; conflicts are resolved interactively |
 | `ctx resolve <conflict> ours\|theirs\|both\|edited` | Resolve one conflict without prompts |
 | `ctx pull --model claude --budget 4000 [--copy] [-o file]` | Render context for a model |
+| `ctx pin <item> [--off]` | Pin an item so renders never drop it |
 | `ctx revert <commit>` | Undo a commit with a new commit |
 | `ctx share <email> --role editor`, `ctx members`, `ctx unshare <email>` | Multi-user access |
-| `ctx settings [--no-auto-commit] [--no-auto-merge] [--no-llm]` | Repo settings |
-| `ctx delete-repo <repo>` | Permanent delete of a repo, its history and uploads |
+| `ctx settings [--no-auto-commit] [--no-auto-merge]` | Repo settings |
+| `ctx delete-repo <repo>` | Permanent delete of a repo and its history |
 
 Every command accepts `--json`. Refs work like git: branch names, commit-id prefixes,
 `HEAD~2`, `main^2`. An item file is a JSON list of `{type, subject, content, reason?}`
@@ -253,13 +273,11 @@ locally, copy [.env.example](.env.example) to `.env`.
 | `CTX_GITHUB_CLIENT_ID` / `_SECRET` | empty | Enables GitHub sign-in |
 | `CTX_DEV_LOGIN` | `false` | Development sign-in with any email; refused in prod |
 | `CTX_EMBEDDING_PROVIDER` | `vertex` | `vertex`, `gemini_api`, `local` or `fake` |
-| `CTX_ARBITER_PROVIDER` | `vertex_gemini` | `vertex_gemini`, `vertex_claude`, `gemini_api`, `none` or `fake` |
-| `CTX_ARBITER_MODEL` / `CTX_ARBITER_LOCATION` | `gemini-3-flash-preview` / `global` | Model that classifies relations |
 | `CTX_GCP_PROJECT` / `CTX_VERTEX_LOCATION` | empty / `us-central1` | Vertex AI project and embedding region |
-| `CTX_GEMINI_API_KEY` | empty | For the `gemini_api` providers (no GCP needed) |
-| `CTX_STORAGE_PROVIDER` / `CTX_GCS_BUCKET` | `db` | Where uploaded exports go: `gcs` or the database |
-| `CTX_TASKS_PROVIDER` | `inline` | `cloud_tasks` in production |
-| `CTX_NLI_ENABLED` | `false` | Optional NLI prefilter (image built with `WITH_NLI=true`) |
+| `CTX_GEMINI_API_KEY` | empty | For `CTX_EMBEDDING_PROVIDER=gemini_api` (no GCP needed) |
+| `CTX_NLI_ENABLED` | `false` (`true` in the container) | Local NLI model for entailment/contradiction checks |
+| `CTX_NLI_MODEL_DIR` | empty (`/srv/models/nli` in the container) | Pre-downloaded model files; otherwise fetched from Hugging Face once |
+| `CTX_MIN_CONFIDENCE` | `0.7` | Below this, a relation is flagged for the user instead of applied |
 | `CTX_ANTHROPIC_API_KEY` | empty | Exact Claude token counts (otherwise a safe estimate) |
 
 Pipeline thresholds, importance weights and rate limits are also configurable; see
@@ -280,6 +298,19 @@ Web viewer with hot reload, against a server on port 8080:
 cd web && npm install && npm run dev      # http://localhost:5173/app/
 ```
 
+The in-chat views live in `web/src/mcp/` and build to one self-contained HTML file served as
+`ui://ctx/app.html` (`npm run build` builds both the viewer and the views). To try them locally,
+run the server with the development sign-in, put the dev-only auth proxy in front of it, and
+point the official [basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host)
+test host at the proxy:
+
+```bash
+CTX_DEV_LOGIN=true CTX_EMBEDDING_PROVIDER=fake CTX_NLI_ENABLED=true   uv run uvicorn ctx_server.app:app --port 8090
+uv run python server/scripts/dev_mcp_proxy.py --server http://127.0.0.1:8090 --port 3001
+# in a clone of modelcontextprotocol/ext-apps, examples/basic-host:
+SERVERS='["http://localhost:3001/mcp"]' npm start      # then open http://localhost:8080
+```
+
 Database changes go in a new Alembic migration under
 `server/src/ctx_server/migrations/versions/`. The app applies migrations on startup.
 
@@ -296,17 +327,19 @@ uv run python -m evals.run --real --suites all      # real models, incl. handoff
 
 | Suite | Measures | Compared against |
 |---|---|---|
-| pipeline | state accuracy, superseded-fact leakage, false-supersession rate, dedupe precision/recall | the same pipeline without the LLM arbiter |
+| pipeline | state accuracy, superseded-fact leakage, false-supersession rate, dedupe precision/recall | rules with and without the NLI model |
 | merge | conflict precision/recall, auto-merge correctness | naive "latest wins" |
 | handoff | probe-question accuracy after commit in model A and pull in model B; accuracy per 1k tokens | truncated raw transcript, model self-summary |
 
-First results with real models (Vertex AI, small sample):
+Results with real embeddings and the local NLI model (30 cases per suite; no server-side LLM):
 
 | | Result | Baseline |
 |---|---|---|
-| Pipeline state accuracy | 1.00, no outdated facts kept | 0.25 without the LLM arbiter |
-| Merge conflicts found | precision 1.00, recall 0.89 | latest-wins: 0, every conflict silently overwritten |
-| Auto-merge correctness | 0.97 | |
+| Pipeline state accuracy | 0.90; the rest are flagged for the user rather than guessed | |
+| Duplicate detection | precision 1.00, recall 0.84 | |
+| Merge conflicts found | precision 0.92, recall 1.00 | latest-wins: 0, every conflict silently overwritten |
+| Auto-merge correctness | 0.96 | |
+| Commit latency | 0.66 s median | 2–17 s with a server-side LLM (earlier design) |
 
 The handoff suite still uses short synthetic conversations that fit in the budget whole, so
 it cannot yet show ctx's advantage over a truncated transcript. Longer, multi-session
@@ -319,15 +352,14 @@ scenarios are on the roadmap.
 - Roles (owner, editor, viewer) are checked by a single service-layer function that every
   REST endpoint and MCP tool goes through. Non-members get "not found", so repo names don't
   leak.
-- Stored text is treated as data. Renders escape it inside clear delimiters, the arbiter is
-  told never to follow instructions found in items, and stored content never triggers tool
-  calls.
+- Stored text is treated as data. Renders escape it inside clear delimiters, and stored
+  content never triggers tool calls. The server runs no generative model, so stored text
+  cannot steer it.
 - Per-user rate limits (stored in Postgres, so they hold across instances) and payload size
   caps.
-- Cloud SQL is on a private IP only, secrets live in Secret Manager, uploads expire after 30
-  days, and deleting a repo hard-deletes its history, audit rows and uploads.
-- Item text is sent to Vertex AI for embeddings and classification. Owners can turn the LLM
-  off per repo (`ctx settings --no-llm`); judgment calls are then flagged for the user.
+- Cloud SQL is on a private IP only, secrets live in Secret Manager, and deleting a repo
+  hard-deletes its history and audit rows.
+- Item text is sent to Vertex AI only to compute embeddings; relation checks run locally.
   The privacy notice is served at `/privacy`.
 
 ## Troubleshooting
@@ -337,7 +369,6 @@ scenarios are on the roadmap.
 | `gcloud` / `ctx` is not recognized | Open a new terminal (or restart VS Code) after installing; run `uv tool update-shell` for `ctx` |
 | Google sign-in says access is blocked | While the OAuth app is in Testing mode, add the account under **Audience → Test users** |
 | Vertex AI calls from your PC fail with 404 or permission errors | Set `GOOGLE_CLOUD_QUOTA_PROJECT=<project-id>` |
-| A Gemini model returns 404 | Model names change; check which ones your project can use and set `CTX_ARBITER_MODEL` / `CTX_ARBITER_LOCATION` |
 | `/healthz` returns Google's 404 page | That path is reserved on Cloud Run's public front end; use `/health` |
 | `ctx` says the session expired | Run `ctx login <url>` again |
 | A commit says the branch moved | Someone committed first; run the commit again so the pipeline compares against the new head |
@@ -348,12 +379,11 @@ the design document.
 ## Status and roadmap
 
 **Working today:** typed commits with the cleaning pipeline, diff and confirm, branch, semantic
-merge with conflict resolution, revert, budgeted cross-model pull, export import, multi-user
+merge with conflict resolution, revert, budgeted cross-model pull, multi-user
 roles, MCP for Claude and ChatGPT, CLI, web viewer, deployment on GCP, CI and evals.
 
 **Next:**
 - Longer, multi-session handoff benchmarks.
-- Faster commits by running independent model calls in parallel.
 - Resolving merge conflicts from the web viewer.
 - An optional free-tier deployment (Neon + Hugging Face Spaces + Gemini API key).
 

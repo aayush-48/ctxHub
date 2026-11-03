@@ -135,7 +135,7 @@ async def test_metadata_and_unauthenticated(client):
     r = await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert r.status_code == 401
     assert "resource_metadata" in r.headers.get("www-authenticate", "")
-    assert (await client.get("/api/v1/repos")).status_code == 401
+    assert (await client.get("/api/v1/me")).status_code == 401
 
 
 async def test_full_flow_rest_and_mcp(client):
@@ -222,6 +222,19 @@ async def test_full_flow_rest_and_mcp(client):
     )
     ctx = res["result"]["structuredContent"]["context"]
     assert "<decisions>" in ctx and "pgvector" in ctx
+
+    # MCP Apps: view tools point at the in-chat app; helpers are hidden from the model.
+    by_name = {t["name"]: t for t in tools["result"]["tools"]}
+    assert by_name["ctx_commit"]["_meta"]["ui"]["resourceUri"] == "ui://ctx/app.html"
+    assert by_name["ctx_app_show"]["_meta"]["ui"]["visibility"] == ["app"]
+    assert "_meta" not in by_name["ctx_init"] or "ui" not in by_name["ctx_init"]["_meta"]
+    assert out["view"] == "commit"
+    res = await mcp_call(
+        client, tok["access_token"], "resources/read", {"uri": "ui://ctx/app.html"}
+    )
+    [contents] = res["result"]["contents"]
+    assert contents["mimeType"] == "text/html;profile=mcp-app"
+    assert "<html" in contents["text"].lower()
 
     # Domain errors come back as tool errors the model can read.
     res = await mcp_call(

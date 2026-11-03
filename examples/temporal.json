@@ -1,0 +1,4 @@
+[
+  {"type": "fact", "subject": "Deploy region",
+   "content": "For now, until the asia-south1 quota increase is approved, the service runs in us-central1."}
+]

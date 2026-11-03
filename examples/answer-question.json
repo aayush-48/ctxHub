@@ -1,0 +1,5 @@
+[
+  {"type": "decision", "subject": "ChatGPT write tools",
+   "content": "ChatGPT supports write tools over MCP in developer mode, so we target it too.",
+   "reason": "Checked the current ChatGPT connector docs"}
+]

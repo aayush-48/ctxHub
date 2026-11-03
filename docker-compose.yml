@@ -1,5 +1,5 @@
-# Local stack: Postgres + pgvector and the ctx server with offline fake AI providers and the
-# development sign-in. Open http://localhost:8080 after `docker compose up --build`.
+# Local stack: Postgres + pgvector and the ctx server with offline stand-in embeddings, the
+# local NLI model, and the development sign-in. Open http://localhost:8080 after `docker compose up --build`.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -25,10 +25,7 @@ services:
       CTX_PUBLIC_BASE_URL: http://localhost:8080
       CTX_DEV_LOGIN: "true"
       CTX_EMBEDDING_PROVIDER: ${CTX_EMBEDDING_PROVIDER:-fake}
-      CTX_ARBITER_PROVIDER: ${CTX_ARBITER_PROVIDER:-fake}
       CTX_GEMINI_API_KEY: ${CTX_GEMINI_API_KEY:-}
-      CTX_TASKS_PROVIDER: inline
-      CTX_STORAGE_PROVIDER: db
 
 volumes:
   pgdata:

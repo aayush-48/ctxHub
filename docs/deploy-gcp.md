@@ -1,7 +1,7 @@
 # Deploy to Google Cloud (free trial)
 
-This sets up ctx on Cloud Run, Cloud SQL (Postgres + pgvector), Secret Manager, Cloud Storage,
-Cloud Tasks and Vertex AI, all in one GCP project. Allow about 45 minutes; most of it is waiting
+This sets up ctx on Cloud Run, Cloud SQL (Postgres + pgvector), Secret Manager and Vertex AI
+(embeddings only), all in one GCP project. Allow about 45 minutes; most of it is waiting
 for Cloud SQL to be created.
 
 **Cost:** the main fixed cost is Cloud SQL (the default `db-f1-micro` tier is the cheapest).
@@ -109,9 +109,7 @@ benchmark against Vertex AI.
 | Variable (`terraform.tfvars`) | Default | Notes |
 |---|---|---|
 | `region` | `asia-south1` | Cloud Run, Cloud SQL, Tasks, Storage |
-| `vertex_location` | `us-central1` | Where Gemini and the embedding model run; must offer both |
-| `arbiter_model` | `gemini-3-flash-preview` | Served from `arbiter_location` (`global`); check current Gemini model names in the Vertex AI docs |
-| `arbiter_provider` | `vertex_gemini` | `vertex_claude` needs Claude enabled in Model Garden (paid, not covered by trial credits) |
+| `vertex_location` | `us-central1` | Where the embedding model runs (the only model API the server calls) |
 | `db_tier` | `db-f1-micro` | `db-g1-small` or larger for heavier use |
 | `public_base_url` | run.app URL | Set if you map a custom domain; update the OAuth redirect URIs to match |
 

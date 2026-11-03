@@ -11,6 +11,7 @@ import numpy as np
 
 from ..config import EMBEDDING_DIM, Settings
 from ..errors import Unavailable
+from .retry import with_retries
 
 
 class Embedder(Protocol):
@@ -68,12 +69,15 @@ class GenAIEmbedder:
         from google.genai import types
 
         async with self._sem:
-            resp = await self._client.aio.models.embed_content(
-                model=self._model,
-                contents=text,
-                config=types.EmbedContentConfig(
-                    task_type="SEMANTIC_SIMILARITY", output_dimensionality=EMBEDDING_DIM
+            resp = await with_retries(
+                lambda: self._client.aio.models.embed_content(
+                    model=self._model,
+                    contents=text,
+                    config=types.EmbedContentConfig(
+                        task_type="SEMANTIC_SIMILARITY", output_dimensionality=EMBEDDING_DIM
+                    ),
                 ),
+                what="embedding call",
             )
         assert resp.embeddings and resp.embeddings[0].values
         return _unit(np.asarray(resp.embeddings[0].values, dtype=np.float64))

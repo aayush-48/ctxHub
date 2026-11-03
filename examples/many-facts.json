@@ -1,0 +1,10 @@
+[
+  {"type": "fact", "subject": "Cold start", "content": "Cloud Run cold starts take about three seconds with the current image, mostly spent importing the Python dependencies and connecting to the database pool."},
+  {"type": "fact", "subject": "Database size", "content": "The Cloud SQL instance uses the smallest shared-core tier with ten gigabytes of storage and automatic storage increases enabled."},
+  {"type": "fact", "subject": "Embedding model", "content": "Embeddings come from the Vertex AI gemini-embedding-001 model, truncated to 768 dimensions and normalized before they are stored."},
+  {"type": "fact", "subject": "Arbiter model", "content": "Relation classification uses gemini-3-flash-preview on the global Vertex endpoint with low thinking to keep latency down."},
+  {"type": "fact", "subject": "Upload retention", "content": "Uploaded chat exports are stored in Cloud Storage and deleted automatically by a lifecycle rule after thirty days."},
+  {"type": "fact", "subject": "Rate limits", "content": "Each user can make one hundred and twenty light requests and twenty heavy requests per minute before getting rate limited."},
+  {"type": "task", "subject": "Handoff benchmark", "content": "Run the long multi-session handoff benchmark at three budgets and record the results in the README."},
+  {"type": "task", "subject": "Custom domain", "content": "Decide whether to move the service to a web.app address through Firebase Hosting or to a purchased domain."}
+]

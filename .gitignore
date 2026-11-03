@@ -7,6 +7,7 @@ __pycache__/
 node_modules/
 web/dist/
 server/src/ctx_server/static/app/
+server/src/ctx_server/static/mcp_app/
 .env
 infra/.terraform/
 infra/*.tfstate*
@@ -14,3 +15,6 @@ infra/terraform.tfvars
 evals/results/
 *.log
 
+*.tsbuildinfo
+*.tfplan
+infra/tfplan

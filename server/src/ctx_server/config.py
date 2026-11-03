@@ -35,44 +35,35 @@ class Settings(BaseSettings):
     access_token_ttl_s: int = 3600
     refresh_token_ttl_s: int = 30 * 24 * 3600
 
-    # Providers
+    # Embeddings are the only model API the server calls. Judgments use rules plus an optional
+    # local NLI model; the user's own chat model does all language understanding.
     embedding_provider: Literal["vertex", "gemini_api", "local", "fake"] = "vertex"
     embedding_model: str = "gemini-embedding-001"
-    arbiter_provider: Literal["vertex_gemini", "vertex_claude", "gemini_api", "none", "fake"] = (
-        "vertex_gemini"
-    )
-    arbiter_model: str = "gemini-3-flash-preview"
-    # Newer Gemini models are served only from the global Vertex endpoint.
-    arbiter_location: str = "global"
-    arbiter_min_confidence: float = 0.7
-    nli_enabled: bool = False
-    nli_model: str = "cross-encoder/nli-deberta-v3-small"
-    gemini_api_key: str | None = None
-    anthropic_api_key: str | None = None  # enables exact Claude token counting
-
+    gemini_api_key: str | None = None  # for embedding_provider=gemini_api
     gcp_project: str | None = None
     vertex_location: str = "us-central1"
-    claude_vertex_location: str = "global"
 
-    storage_provider: Literal["gcs", "db"] = "db"
-    gcs_bucket: str | None = None
-    tasks_provider: Literal["cloud_tasks", "inline"] = "inline"
-    tasks_queue: str | None = None  # projects/<p>/locations/<l>/queues/<q>
-    tasks_service_account: str | None = None  # SA email Cloud Tasks signs OIDC tokens as
+    nli_enabled: bool = False
+    nli_model_repo: str = "cross-encoder/nli-deberta-v3-small"
+    nli_model_file: str = "onnx/model_quint8_avx2.onnx"
+    nli_model_dir: str | None = None  # pre-downloaded files (the container image bakes them in)
 
-    # Cleaning pipeline thresholds (cosine similarity on embeddings).
+    anthropic_api_key: str | None = None  # optional: exact Claude token counts (not generation)
+
+    # Cleaning pipeline: cosine-similarity thresholds, and the minimum confidence for applying
+    # a relation verdict instead of flagging it for the user.
     dedupe_threshold: float = 0.95
     related_threshold: float = 0.75
+    min_confidence: float = 0.7
     max_items_per_commit: int = 50
     max_subject_chars: int = 200
     max_content_chars: int = 4000
     proposal_ttl_s: int = 24 * 3600
 
-    # Importance weights: typeWeight, recency, useCount, llmScore.
-    w_type: float = 0.45
-    w_recency: float = 0.2
-    w_use: float = 0.1
-    w_llm: float = 0.25
+    # Importance weights: typeWeight, recency, useCount.
+    w_type: float = 0.6
+    w_recency: float = 0.25
+    w_use: float = 0.15
     recency_half_life_days: float = 14.0
 
     # Rendering

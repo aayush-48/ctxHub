@@ -10,7 +10,7 @@ variable "region" {
 }
 
 variable "vertex_location" {
-  description = "Vertex AI region for embeddings and the Gemini arbiter (must offer the models)."
+  description = "Vertex AI region for the embedding model (the only model API the server calls)."
   type        = string
   default     = "us-central1"
 }
@@ -43,16 +43,7 @@ variable "db_deletion_protection" {
   default = true
 }
 
-variable "arbiter_provider" {
-  description = "vertex_gemini, vertex_claude, gemini_api or none."
-  type        = string
-  default     = "vertex_gemini"
-}
 
-variable "arbiter_model" {
-  type    = string
-  default = "gemini-3-flash-preview"
-}
 
 variable "embedding_model" {
   type    = string
@@ -98,10 +89,4 @@ variable "github_repo" {
 variable "max_instances" {
   type    = number
   default = 3
-}
-
-variable "arbiter_location" {
-  description = "Vertex AI location for the Gemini arbiter; newer Gemini models are served from global."
-  type        = string
-  default     = "global"
 }

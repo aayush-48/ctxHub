@@ -34,4 +34,3 @@ export type Commit = {
   active_items: number;
 };
 export type Branch = { name: string; head_commit_id: string };
-export type Repo = { id: string; name: string; owner: string; role: string; description?: string };

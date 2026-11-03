@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
-from . import api, tasks
+from . import api
 from .auth import routes as auth_routes
 from .auth.provider import provider
 from .config import get_settings
@@ -44,7 +44,6 @@ def create_app() -> FastAPI:
         await provider.ensure_web_client()
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
-        await tasks.drain()
         await dispose_engine()
 
     app = FastAPI(
@@ -120,7 +119,6 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(api.router)
-    app.include_router(api.internal)
     app.include_router(auth_routes.router)
 
     @app.get("/", include_in_schema=False)

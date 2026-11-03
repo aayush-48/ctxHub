@@ -110,6 +110,23 @@ async def test_refinement_keeps_item_key(alice, repo):
     assert sorted(i["status"] for i in items) == ["active", "superseded"]
 
 
+async def test_contradiction_across_types_supersedes(alice, repo):
+    # The same thing recorded as a decision earlier and as a fact now must not stay twice.
+    await commit(alice, repo, [item("decision", "Embedding size", "Embeddings have 768 dims.")])
+    r = await commit(alice, repo, [item("fact", "Embedding size", "Embeddings have 1536 dims.")])
+    [e] = r["entries"]
+    assert e["action"] == "supersede"
+    await service.confirm(alice, uuid.UUID(r["proposal_id"]), ConfirmIn())
+    items = (await service.list_items(alice, repo, None))["items"]
+    assert [i["content"] for i in items] == ["Embeddings have 1536 dims."]
+
+
+async def test_tasks_and_questions_are_not_compared_with_decisions(alice, repo):
+    await commit(alice, repo, [item("decision", "Schema", "Use one table per entity.")])
+    r = await commit(alice, repo, [item("task", "Schema", "Write the schema migration.")])
+    assert r["entries"][0]["action"] == "add" and r["committed"]
+
+
 async def test_temporal_scope_is_flagged_and_choice_applies(alice, repo):
     await commit(alice, repo, [item("decision", "Region", "Deploy to asia-south1.")])
     r = await commit(
@@ -233,3 +250,16 @@ async def test_roles_enforced(alice, bob, repo):
     await service.set_member(alice, repo, MemberIn(email=bob.email, role="editor"))
     r = await commit(bob, repo, [item("task", "x", "y")])
     assert r["committed"]
+
+
+async def test_repo_names_are_unique_across_owners(alice, bob):
+    from ctx_server.schemas import RepoCreateIn
+
+    name = f"Shared-{uuid.uuid4().hex[:6]}"
+    await service.create_repo(alice, RepoCreateIn(name=name))
+    with pytest.raises(Conflict, match="already taken"):
+        await service.create_repo(bob, RepoCreateIn(name=name.lower()))
+    # The owner can address it by name in any case; others still cannot see it.
+    assert (await service.status(alice, name.upper()))["repo"] == name
+    with pytest.raises(NotFound):
+        await service.status(bob, name)

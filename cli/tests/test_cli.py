@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import io
 import json
-import zipfile
 
 from ctx_cli.main import S, app
 from typer.testing import CliRunner
@@ -122,35 +120,24 @@ def test_cli_merge_conflict_interactive(cli_env, tmp_path):
     assert decisions == ["Use Postgres."]
 
 
-def test_cli_import_and_errors(cli_env, tmp_path):
-    ctx("init", "imports")
-    export = tmp_path / "export.zip"
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr(
-            "conversations.json",
-            json.dumps(
-                [
-                    {
-                        "uuid": "u1",
-                        "name": "Plan",
-                        "chat_messages": [
-                            {
-                                "sender": "human",
-                                "content": [
-                                    {"type": "text", "text": "task: Schema | Write the schema."}
-                                ],
-                            }
-                        ],
-                    }
-                ]
-            ),
-        )
-    export.write_bytes(buf.getvalue())
-    out = ctx("import", str(export), "--yes")
-    assert "Committed" in out
-    assert ctxj("status")["active_items"] == {"task": 1}
+def test_cli_repo_names_and_errors(cli_env, server_url, tmp_path, monkeypatch):
+    ctx("init", "Taken-Name")
+    # Another person cannot create the same name, in any case.
+    from ctx_cli.config import Config
 
+    from .conftest import dev_token
+
+    other = tmp_path / "other.json"
+    monkeypatch.setenv("CTX_CONFIG", str(other))
+    tok = dev_token(server_url, "someone-else@example.com")
+    Config(
+        server=server_url,
+        client_id=tok["client_id"],
+        access_token=tok["access_token"],
+        refresh_token=tok["refresh_token"],
+    ).save()
     S.json = False
+    r = runner.invoke(app, ["init", "taken-name"])
+    assert r.exit_code != 0
     r = runner.invoke(app, ["--repo", "nope", "status"])
     assert r.exit_code != 0

@@ -1,14 +1,11 @@
-"""Branch and merge, rendering under a budget, and export import."""
+"""Branch and merge, and rendering under a budget."""
 
 from __future__ import annotations
 
-import io
-import json
 import uuid
-import zipfile
 
 import pytest
-from ctx_server import service, tasks
+from ctx_server import service
 from ctx_server.errors import Conflict, ValidationFailed
 from ctx_server.schemas import BranchCreateIn, CommitIn, ConfirmIn, EditedItemIn, PullIn, ResolveIn
 
@@ -219,92 +216,57 @@ async def test_render_escapes_stored_markup(alice, repo):
     assert "&lt;/context&gt;" in r["context"]
 
 
-def _claude_export() -> bytes:
-    convs = [
-        {
-            "uuid": "c-1",
-            "name": "Planning",
-            "chat_messages": [
-                {
-                    "sender": "human",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "decision: Primary datastore | Use Postgres with pgvector.",
-                        }
-                    ],
-                },
-                {
-                    "sender": "assistant",
-                    "content": [{"type": "text", "text": "constraint: Hosting | Must run on GCP."}],
-                },
-            ],
-        },
-        {"uuid": "c-2", "name": "Other chat", "chat_messages": []},
+async def test_pinned_items_are_never_dropped_and_pinning_is_audited(alice, bob, repo):
+    from ctx_server.errors import Forbidden
+    from ctx_server.schemas import MemberIn
+
+    facts = [
+        item("fact", f"Fact {n}", f"Fact number {n} is a long detail about part {n} " * 6)
+        for n in range(20)
     ]
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("conversations.json", json.dumps(convs))
-    return buf.getvalue()
+    await commit(alice, repo, facts)
+    target = next(
+        i
+        for i in (await service.list_items(alice, repo, None))["items"]
+        if i["subject"] == "Fact 7"
+    )
+    tight = PullIn(model="gpt-5", budget=300)
+    before = await service.pull(alice, repo, tight)
+    assert target["item_key"] in {d["item_key"] for d in before["manifest"]["dropped"]}
+
+    pinned = await service.set_pin(alice, repo, target["item_key"][:8], True)
+    assert pinned["pinned"] is True
+    after = await service.pull(alice, repo, tight)
+    states = {i["item_key"]: i for i in after["manifest"]["items"]}
+    assert states[target["item_key"]]["state"] != "dropped"
+    assert states[target["item_key"]]["pinned"] is True
+    # No commit was created; the audit log records the pin against the head.
+    log = await service.log(alice, repo, None)
+    assert log["commits"][0]["message"] == "m"
+    shown = await service.show(alice, repo, None)
+    assert any(a["stage"] == "pin" and a["decision"] == "pinned" for a in shown["audit"])
+    # Viewers cannot pin.
+    await service.set_member(alice, repo, MemberIn(email=bob.email, role="viewer"))
+    with pytest.raises(Forbidden):
+        await service.set_pin(bob, repo, target["item_key"][:8], False)
 
 
-async def test_import_claude_export(alice, repo):
-    with pytest.raises(ValidationFailed) as e:
-        await service.start_import(alice, repo, _claude_export(), "export.zip", None, None)
-    assert e.value.details["total"] == 2
-    up = await service.start_import(alice, repo, _claude_export(), "export.zip", "Planning", None)
-    await tasks.drain()
-    st = await service.get_import(alice, uuid.UUID(up["upload_id"]))
-    assert st["status"] == "done", st
-    entries = st["proposal"]["entries"]
-    assert {e["item"]["type"] for e in entries} == {"decision", "constraint"}
-    # Imports always wait for review.
-    assert (await service.status(alice, repo))["active_total"] == 0
-    await service.confirm(alice, uuid.UUID(st["proposal"]["proposal_id"]), ConfirmIn())
-    assert (await service.status(alice, repo))["active_total"] == 2
-
-
-async def test_extraction_keeps_settled_decisions_marked_resolved():
-    from ctx_server.core.imports import Conversation, extract_items
-    from ctx_server.providers.arbiter import ExtractedItem
-
-    class Arbiter:
-        async def extract(self, transcript, known):
-            return [
-                ExtractedItem(type="decision", subject="DB", content="Use X.", status="resolved"),
-                ExtractedItem(
-                    type="task", subject="Docs", content="Write docs.", status="resolved"
-                ),
-                ExtractedItem(type="open_question", subject="Q", content="Why?", status="active"),
-            ]
-
-    conv = Conversation(id="c", title="t", messages=[("user", "hi")])
-    items = await extract_items(Arbiter(), conv, 50)
-    assert sorted(i.type for i in items) == ["decision", "open_question"]
-
-
-def test_chatgpt_export_follows_active_branch():
-    from ctx_server.core.imports import parse_export
-
-    conv = {
-        "title": "T",
-        "conversation_id": "x",
-        "current_node": "c",
-        "mapping": {
-            "a": {
-                "message": {"author": {"role": "user"}, "content": {"parts": ["hello"]}},
-                "parent": None,
-            },
-            "b": {
-                "message": {"author": {"role": "assistant"}, "content": {"parts": ["abandoned"]}},
-                "parent": "a",
-            },
-            "c": {
-                "message": {"author": {"role": "assistant"}, "content": {"parts": ["kept"]}},
-                "parent": "a",
-            },
-        },
-    }
-    src, [c] = parse_export(json.dumps([conv]).encode())
-    assert src == "chatgpt_export"
-    assert c.messages == [("user", "hello"), ("assistant", "kept")]
+@pytest.mark.parametrize("choice", ["ours", "theirs"])
+async def test_refined_here_replaced_there(alice, repo, choice):
+    # Main refines the decision (same item); the branch replaces it with a different one.
+    await commit(alice, repo, [item("decision", "DB", "Use Postgres")])
+    await service.create_branch(alice, repo, BranchCreateIn(name="b"))
+    await commit(alice, repo, [item("decision", "DB", "Use Postgres with pgvector")], branch="main")
+    await commit(alice, repo, [item("decision", "DB", "Use Firestore.")], branch="b")
+    r = await service.merge(alice, repo, "b")
+    [c] = r["conflicts"]
+    assert c["kind"] == "both_modified"
+    assert (c["ours"]["content"], c["theirs"]["content"]) == (
+        "Use Postgres with pgvector",
+        "Use Firestore.",
+    )
+    await service.resolve_conflict(
+        alice, uuid.UUID(r["merge_id"]), uuid.UUID(c["conflict_id"]), ResolveIn(choice=choice)
+    )
+    expected = "Use Postgres with pgvector" if choice == "ours" else "Use Firestore."
+    assert await active(alice, repo) == [expected]

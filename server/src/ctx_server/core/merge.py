@@ -11,8 +11,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..providers.arbiter import ArbiterUnavailable, ItemView
-from .pipeline import PipelineDeps
+from .pipeline import PipelineDeps, same_group
+from .relations import ItemView, Pair, classify_pairs
 from .snapshot import SnapItem, Snapshot, cosine
 from .text import content_key
 
@@ -53,6 +53,29 @@ def _active_of(snap: Snapshot, key: uuid.UUID) -> SnapItem | None:
     return max(act or cands, key=lambda i: i.created_at)
 
 
+def _current_of(snap: Snapshot, key: uuid.UUID) -> SnapItem | None:
+    """What a branch currently holds for an item: its active version, or, when that branch
+    replaced it with a different item, the replacement."""
+    item = _active_of(snap, key)
+    seen: set[uuid.UUID] = set()
+    while item is not None and item.status != "active" and item.superseded_by in snap.items:
+        if item.id in seen:
+            break
+        seen.add(item.id)
+        item = snap.items[item.superseded_by]
+    return item
+
+
+def _replacements(snap: Snapshot, state: KeyState | None, key: uuid.UUID) -> list[str]:
+    """Items outside this key that a branch used to supersede the key's items."""
+    out = []
+    for _, _, sup in state or ():
+        rep = snap.items.get(sup) if sup else None
+        if rep is not None and rep.item_key != key:
+            out.append(str(rep.id))
+    return sorted(set(out))
+
+
 def _state_json(state: KeyState | None) -> list[list[str | None]]:
     return [
         [str(i), st, str(sup) if sup else None]
@@ -71,8 +94,6 @@ async def plan_merge(
     base: Snapshot,
     ours: Snapshot,
     theirs: Snapshot,
-    *,
-    llm_enabled: bool,
 ) -> MergePlan:
     s = deps.settings
     kb, ko, kt = _key_states(base), _key_states(ours), _key_states(theirs)
@@ -129,7 +150,7 @@ async def plan_merge(
             # Both sides changed the same item differently. Keep ours provisionally.
             if o:
                 take(o)
-            bi, oi, ti = _active_of(base, key), _active_of(ours, key), _active_of(theirs, key)
+            bi, oi, ti = _active_of(base, key), _current_of(ours, key), _current_of(theirs, key)
             plan.conflicts.append(
                 ConflictPlan(
                     kind="both_modified",
@@ -140,6 +161,8 @@ async def plan_merge(
                         "item_key": str(key),
                         "ours_state": _state_json(o),
                         "theirs_state": _state_json(t),
+                        "ours_replacements": _replacements(ours, o, key),
+                        "theirs_replacements": _replacements(theirs, t, key),
                         "reason": "both branches changed this item",
                     },
                 )
@@ -162,7 +185,7 @@ async def plan_merge(
             if a.item_key == b_.item_key:
                 continue
             is_forced = (a.id, b_.id) in forced_set
-            if a.type != b_.type and not is_forced:
+            if not same_group(a.type, b_.type) and not is_forced:
                 continue
             sim = cosine(a.embedding, b_.embedding)
             if is_forced or a.subject_norm == b_.subject_norm or sim >= s.related_threshold:
@@ -174,19 +197,15 @@ async def plan_merge(
     }
     exact = [pairs[n] for n in sorted(exact_idx)]
     to_classify = [p for n, p in enumerate(pairs) if n not in exact_idx]
-    labels: dict[int, Any] = {}
-    arbiter_error = None
-    if to_classify and llm_enabled and deps.arbiter.available:
-        try:
-            labels = dict(
-                enumerate(
-                    await deps.arbiter.classify([(_view(a), _view(b_)) for a, b_, _ in to_classify])
-                )
-            )
-        except ArbiterUnavailable as e:
-            arbiter_error = e.message
-    elif to_classify:
-        arbiter_error = "LLM arbiter disabled for this repo"
+    # "existing" is ours and "new" is theirs in each pair.
+    labels = await classify_pairs(
+        [
+            Pair(_view(a), _view(b_), sim, a.subject_norm == b_.subject_norm)
+            for a, b_, sim in to_classify
+        ],
+        s,
+        deps.nli,
+    )
 
     used: set[uuid.UUID] = set()
     for a, b_, _sim in exact:
@@ -206,29 +225,12 @@ async def plan_merge(
     for n, (a, b_, sim) in enumerate(to_classify):
         if a.id in used or b_.id in used:
             continue
-        rel = labels.get(n)
+        rel = labels[n]
         base_details = {
             "similarity": round(sim, 4),
             "ours_subject": a.subject,
             "theirs_subject": b_.subject,
         }
-        if rel is None:
-            if a.subject_norm == b_.subject_norm:
-                used |= {a.id, b_.id}
-                plan.conflicts.append(
-                    ConflictPlan(
-                        kind="contradiction",
-                        base_item=None,
-                        ours_item=a.id,
-                        theirs_item=b_.id,
-                        details={
-                            **base_details,
-                            "label": "unclassified",
-                            "reason": f"same subject on both branches; {arbiter_error}",
-                        },
-                    )
-                )
-            continue
         plan.events.append(
             {
                 "stage": "merge",
@@ -242,7 +244,7 @@ async def plan_merge(
                 },
             }
         )
-        confident = rel.confidence >= s.arbiter_min_confidence
+        confident = rel.confidence >= s.min_confidence
         if rel.label in ("contradiction", "temporal_scope"):
             used |= {a.id, b_.id}
             plan.conflicts.append(

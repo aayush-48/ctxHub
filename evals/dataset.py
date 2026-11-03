@@ -299,3 +299,128 @@ def transcript_for(case_subjects: list[tuple[Subject, list[int]]], rng: random.R
                 )
             lines.append(f"Assistant: {rng.choice(fillers)}")
     return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------- long handoff
+
+# Subjects whose answer keywords are distinctive enough to score free-text answers
+# ("user" and "latest" from the merge-policy subject appear in ordinary answers).
+HANDOFF_SUBJECTS = [s for s in SUBJECTS if s.name != "Merge policy"]
+
+# Realistic side discussion that never states any subject's value. Checked below so filler
+# can never leak an answer keyword into a transcript.
+_FILLER_USER = [
+    "Can you walk me through how error handling should work in the API layer?",
+    "I'm worried the onboarding flow has too many steps for new people.",
+    "What naming convention should we use for the internal modules?",
+    "How should we structure the logging so it is easy to search later?",
+    "Let's talk about how we version the public endpoints.",
+    "Should the settings page be split into several smaller pages?",
+    "What's a sensible retry policy for calls to external services?",
+    "I keep going back and forth on how verbose the commit messages should be.",
+    "How do we keep the documentation from drifting away from the code?",
+    "Can we make the empty states in the interface more helpful?",
+    "What should happen when someone loses their network connection mid-request?",
+    "I'd like the error messages to tell people what to do next.",
+    "How should we handle timezones when we show dates?",
+    "Is it worth adding keyboard shortcuts this early?",
+    "What's the cleanest way to share types between the services?",
+]
+_FILLER_ASSISTANT = [
+    "A good approach is to keep each layer responsible for one kind of failure and to "
+    "translate errors at the boundary, so callers always get a consistent shape.",
+    "Fewer steps usually helps. Ask only for what is needed to get started, and defer the "
+    "rest until people actually need it.",
+    "Short, descriptive names grouped by feature tend to age better than names grouped by "
+    "technical layer, because features are what people search for.",
+    "Structured logs with a request identifier on every line make it far easier to follow "
+    "one request across several services.",
+    "Versioning in the path is the most visible option; whichever you choose, document the "
+    "deprecation policy so integrators know what to expect.",
+    "Splitting it by task rather than by data model usually makes it easier to find things.",
+    "Exponential backoff with jitter and a small cap on attempts is a safe default, plus a "
+    "clear error once the attempts run out.",
+    "A short subject line and an optional body explaining why the change was made is a "
+    "common and readable convention.",
+    "Keeping examples in the docs executable, and checking them in continuous integration, "
+    "is one of the few things that reliably prevents drift.",
+    "An empty state should explain what belongs there and offer the one action that fills "
+    "it, rather than just saying that nothing exists.",
+    "Saving work locally and retrying when the connection returns avoids losing input, as "
+    "long as people can see that a retry is pending.",
+    "Store times in coordinated universal time and convert at display time, using the "
+    "viewer's own setting.",
+    "Shortcuts can wait until the main flows are stable, but reserving the common ones now "
+    "avoids conflicts later.",
+    "Generating the shared types from one schema keeps services in sync without copying "
+    "definitions by hand.",
+]
+
+
+def _all_keywords() -> set[str]:
+    return {k.lower() for s in HANDOFF_SUBJECTS for k in s.keywords}
+
+
+for _line in _FILLER_USER + _FILLER_ASSISTANT:
+    _hits = [k for k in _all_keywords() if k in _line.lower()]
+    assert not _hits, f"filler leaks answer keywords {_hits}: {_line!r}"
+
+
+@dataclass
+class HandoffCase:
+    """A multi-session project conversation. Values are introduced and changed across
+    sessions, surrounded by unrelated discussion, so the full transcript is far larger than
+    any budget and the latest value of a subject can be sessions away from its first."""
+
+    history: list[tuple[Subject, list[int]]]  # value history per subject; last is gold
+    sessions: list[list[tuple[str, str]]]  # per session: (role, text) messages
+
+    def questions(self) -> list[str]:
+        return [s.question for s, _ in self.history]
+
+
+def handoff_case(
+    rng: random.Random, n_subjects: int = 6, n_sessions: int = 4, filler_per_session: int = 40
+) -> HandoffCase:
+    subs = rng.sample(HANDOFF_SUBJECTS, n_subjects)
+    events: dict[int, list[tuple[Subject, int, bool]]] = {k: [] for k in range(n_sessions)}
+    history = []
+    for s in subs:
+        session = rng.randrange(n_sessions - 1)
+        values = [rng.randrange(len(s.values))]
+        events[session].append((s, values[0], False))
+        for _ in range(rng.choice([0, 1, 1, 2])):  # most subjects change at least once
+            if session >= n_sessions - 1:
+                break
+            session = rng.randrange(session + 1, n_sessions)
+            v = rng.choice([x for x in range(len(s.values)) if x != values[-1]])
+            values.append(v)
+            events[session].append((s, v, True))
+        history.append((s, values))
+
+    sessions = []
+    for k in range(n_sessions):
+        msgs: list[tuple[str, str]] = []
+        for _ in range(filler_per_session):
+            msgs.append(("user", rng.choice(_FILLER_USER)))
+            msgs.append(("assistant", rng.choice(_FILLER_ASSISTANT)))
+        for s, v, changed in events[k]:
+            text = s.values[v][rng.randrange(len(s.values[v]))]
+            if changed:
+                stmt = (
+                    f"Change of plan on {s.name.lower()}: {text} This replaces what we said before."
+                )
+            else:
+                stmt = f"Let's settle {s.name.lower()}. {text}"
+            at = rng.randrange(len(msgs) // 2 + 1) * 2
+            msgs[at:at] = [("user", stmt), ("assistant", "Understood, I'll go with that.")]
+        sessions.append(msgs)
+    return HandoffCase(history=history, sessions=sessions)
+
+
+def render_transcript(sessions: list[list[tuple[str, str]]]) -> str:
+    parts = []
+    for n, msgs in enumerate(sessions, 1):
+        parts.append(f"--- Session {n} ---")
+        parts += [f"{'User' if r == 'user' else 'Assistant'}: {t}" for r, t in msgs]
+    return "\n".join(parts)

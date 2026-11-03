@@ -15,9 +15,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import tasks
 from .core import graph
-from .core.imports import extract_items, parse_export, select_conversation
 from .core.items import NewItem, insert_item
 from .core.merge import (
     membership_from_json,
@@ -25,7 +23,7 @@ from .core.merge import (
     plan_to_json,
     state_from_json,
 )
-from .core.pipeline import apply_proposal, public_entries, run_pipeline
+from .core.pipeline import apply_proposal, find_item, public_entries, run_pipeline
 from .core.render import render
 from .core.snapshot import Snapshot, load_snapshot
 from .core.text import heuristic_compress, normalize_subject, normalize_text
@@ -48,8 +46,12 @@ ROLE_RANK = {"viewer": 0, "editor": 1, "owner": 2}
 DEFAULT_REPO_SETTINGS = {
     "auto_commit_additive": True,
     "auto_merge_additive": True,
-    "llm_enabled": True,
 }
+
+
+def _repo_settings(stored: dict[str, Any] | None) -> dict[str, Any]:
+    """Stored settings over defaults; keys no longer supported are ignored."""
+    return {k: (stored or {}).get(k, v) for k, v in DEFAULT_REPO_SETTINGS.items()}
 
 
 @dataclass(frozen=True)
@@ -109,49 +111,32 @@ async def get_user(user_id: uuid.UUID) -> dict[str, Any]:
 async def _authorize(s: AsyncSession, actor: Actor, repo_ref: str, need: str) -> RepoCtx:
     """Resolve a repo reference the actor can see and check the actor's role on it.
 
-    repo_ref is a repo id, a repo name the actor is a member of, or "<owner email>/<name>".
-    Unknown and forbidden repos are reported identically (not found) unless the actor can at
-    least view the repo, so repo names are not disclosed to non-members.
+    repo_ref is a repo id or a repo name (names are globally unique, case-insensitively).
+    Unknown repos and repos the actor is not a member of are reported identically (not
+    found), so membership is not disclosed.
     """
-    params: dict[str, Any] = {"u": actor.id}
     ref = repo_ref.strip()
     try:
-        params["id"] = uuid.UUID(ref)
+        params: dict[str, Any] = {"u": actor.id, "id": uuid.UUID(ref)}
         where = "r.id = :id"
     except ValueError:
-        if "/" in ref:
-            owner, name = ref.rsplit("/", 1)
-            params |= {"owner": owner.lower(), "name": name}
-            where = "r.name = :name AND lower(o.email) = :owner"
-        else:
-            params["name"] = ref
-            where = "r.name = :name"
-    rows = (
+        params = {"u": actor.id, "name": ref}
+        where = "lower(r.name) = lower(:name)"
+    r = (
         (
             await s.execute(
                 text(
-                    f"SELECT r.id, r.name, r.owner_id, r.settings, m.role, o.email AS owner_email "
-                    f"FROM repos r JOIN repo_members m ON m.repo_id = r.id AND m.user_id = :u "
-                    f"JOIN users o ON o.id = r.owner_id WHERE {where}"
+                    f"SELECT r.id, r.name, r.owner_id, r.settings, m.role FROM repos r "
+                    f"JOIN repo_members m ON m.repo_id = r.id AND m.user_id = :u WHERE {where}"
                 ),
                 params,
             )
         )
         .mappings()
-        .all()
+        .first()
     )
-    if not rows:
+    if r is None:
         raise NotFound(f"repo {repo_ref!r} not found")
-    if len(rows) > 1:
-        owned = [r for r in rows if r["owner_id"] == actor.id]
-        if len(owned) == 1:
-            rows = owned
-        else:
-            raise ValidationFailed(
-                f"repo name {repo_ref!r} is ambiguous; use <owner email>/<name> or the repo id",
-                [{"id": str(r["id"]), "owner": r["owner_email"]} for r in rows],
-            )
-    r = rows[0]
     if ROLE_RANK[r["role"]] < ROLE_RANK[need]:
         raise Forbidden(f"this needs the {need} role on {r['name']!r}; you are {r['role']}")
     return RepoCtx(
@@ -159,7 +144,7 @@ async def _authorize(s: AsyncSession, actor: Actor, repo_ref: str, need: str) ->
         name=r["name"],
         owner_id=r["owner_id"],
         role=r["role"],
-        settings={**DEFAULT_REPO_SETTINGS, **(r["settings"] or {})},
+        settings=_repo_settings(r["settings"]),
     )
 
 
@@ -171,18 +156,19 @@ async def _authorize_by_id(s: AsyncSession, actor: Actor, repo_id: uuid.UUID, ne
 
 
 async def create_repo(actor: Actor, body: RepoCreateIn) -> dict[str, Any]:
+    taken = Conflict(f"the repo name {body.name!r} is already taken; choose another name")
     async with session_scope() as s:
         exists = await s.execute(
-            text("SELECT 1 FROM repos WHERE owner_id = :u AND name = :n"),
-            {"u": actor.id, "n": body.name},
+            text("SELECT 1 FROM repos WHERE lower(name) = lower(:n)"), {"n": body.name}
         )
         if exists.first():
-            raise Conflict(f"you already have a repo named {body.name!r}")
+            raise taken
         repo_id = uuid.uuid4()
-        await s.execute(
+        inserted = await s.execute(
             text(
                 "INSERT INTO repos (id, owner_id, name, description, settings) "
-                "VALUES (:id, :u, :n, :d, CAST(:st AS jsonb))"
+                "VALUES (:id, :u, :n, :d, CAST(:st AS jsonb)) "
+                "ON CONFLICT ((lower(name))) DO NOTHING RETURNING id"
             ),
             {
                 "id": repo_id,
@@ -192,6 +178,8 @@ async def create_repo(actor: Actor, body: RepoCreateIn) -> dict[str, Any]:
                 "st": json.dumps(DEFAULT_REPO_SETTINGS),
             },
         )
+        if inserted.first() is None:  # lost a race for the same name
+            raise taken
         await s.execute(
             text("INSERT INTO repo_members (repo_id, user_id, role) VALUES (:r, :u, 'owner')"),
             {"r": repo_id, "u": actor.id},
@@ -211,25 +199,6 @@ async def create_repo(actor: Actor, body: RepoCreateIn) -> dict[str, Any]:
         )
         await _set_head(s, actor.id, repo_id, "main", None)
     return {"id": str(repo_id), "name": body.name, "branch": "main", "root_commit": str(root)}
-
-
-async def list_repos(actor: Actor) -> list[dict[str, Any]]:
-    async with session_scope() as s:
-        rows = (
-            (
-                await s.execute(
-                    text(
-                        "SELECT r.id, r.name, r.description, r.created_at, m.role, o.email AS owner "
-                        "FROM repos r JOIN repo_members m ON m.repo_id = r.id AND m.user_id = :u "
-                        "JOIN users o ON o.id = r.owner_id ORDER BY r.created_at DESC"
-                    ),
-                    {"u": actor.id},
-                )
-            )
-            .mappings()
-            .all()
-        )
-    return [{**_jsonable(dict(r))} for r in rows]
 
 
 async def get_repo(actor: Actor, repo: str) -> dict[str, Any]:
@@ -261,12 +230,10 @@ async def update_repo_settings(actor: Actor, repo: str, body: RepoSettingsIn) ->
 
 
 async def delete_repo(actor: Actor, repo: str) -> None:
-    """Hard delete: commits, items, audit rows, uploads and stored export files."""
+    """Hard delete: branches, commits, items, merges and audit rows (cascades on the repo)."""
     async with session_scope() as s:
         rc = await _authorize(s, actor, repo, "owner")
-        # Break FK cycles (branches -> commits, user_heads -> commits) via cascades on repo.
         await s.execute(text("DELETE FROM repos WHERE id = :id"), {"id": rc.id})
-    await get_runtime().blob.delete_repo(rc.id)
 
 
 # ---------------------------------------------------------------------------- members
@@ -521,6 +488,45 @@ async def list_items(
     return {"commit": str(commit), "branch": branch, "items": [i.view() for i in items]}
 
 
+async def set_pin(actor: Actor, repo: str, item: str, pinned: bool) -> dict[str, Any]:
+    """Pin or unpin an active item: a render-priority setting, not a change of state, so it
+    creates no commit. Pinned items are never silently dropped from renders. The change is
+    recorded in the audit log against the current head."""
+    async with session_scope() as s:
+        rc = await _authorize(s, actor, repo, "editor")
+        branch, head = await _current(s, actor, rc)
+        target = find_item(await load_snapshot(s, head), item)
+        await s.execute(
+            text("UPDATE state_items SET pinned = :p WHERE id = :id"),
+            {"p": pinned, "id": target.id},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO pipeline_audit (commit_id, stage, decision, details) "
+                "VALUES (:c, 'pin', :d, CAST(:det AS jsonb))"
+            ),
+            {
+                "c": head,
+                "d": "pinned" if pinned else "unpinned",
+                "det": json.dumps(
+                    {
+                        "item_id": str(target.id),
+                        "item_key": str(target.item_key),
+                        "subject": target.subject,
+                        "by": str(actor.id),
+                    }
+                ),
+            },
+        )
+    return {
+        "item_key": str(target.item_key),
+        "subject": target.subject,
+        "content": target.content,
+        "pinned": pinned,
+        "branch": branch,
+    }
+
+
 # ---------------------------------------------------------------------------- commit path
 
 
@@ -545,7 +551,6 @@ async def commit(actor: Actor, body: CommitIn) -> dict[str, Any]:
             body.items,
             body.updates,
             provenance,
-            llm_enabled=bool(rc.settings.get("llm_enabled", True)),
         )
     auto = (
         body.auto_confirm
@@ -1025,7 +1030,6 @@ async def merge(
             base,
             ours,
             theirs,
-            llm_enabled=bool(rc.settings.get("llm_enabled", True)),
         )
     auto = rc.settings.get("auto_merge_additive", True) and not review
     async with session_scope() as s:
@@ -1338,17 +1342,28 @@ async def _apply_resolution(
     choice = r["resolution"]
     ours_i, theirs_i = r["ours_item"], r["theirs_item"]
     if r["kind"] == "both_modified":
-        ours_state = state_from_json(r["details"]["ours_state"])
-        theirs_state = state_from_json(r["details"]["theirs_state"])
+        details = r["details"]
+        ours_state = state_from_json(details["ours_state"])
+        theirs_state = state_from_json(details["theirs_state"])
+        # Items a branch used to replace this item with (outside the item's key). The losing
+        # side's replacements must be closed too, or they would stay active after the merge.
+        ours_reps = [uuid.UUID(x) for x in details.get("ours_replacements", [])]
+        theirs_reps = [uuid.UUID(x) for x in details.get("theirs_replacements", [])]
         for iid in set(ours_state) | set(theirs_state):
             membership.pop(iid, None)
         if choice == "ours":
             membership.update(ours_state)
+            for rep in theirs_reps:
+                membership[rep] = ("superseded", ours_i) if ours_i else ("retracted", None)
         elif choice == "theirs":
             membership.update(theirs_state)
+            for rep in ours_reps:
+                membership[rep] = ("superseded", theirs_i) if theirs_i else ("retracted", None)
         elif choice == "both":
             membership.update(ours_state)
-            if theirs_i and theirs_i in theirs_snap.items:
+            # Theirs' version lives in the same item key: give it a key of its own. A theirs
+            # replacement with its own key is already active from the one-sided changes.
+            if theirs_i and theirs_state.get(theirs_i, ("",))[0] == "active":
                 t = theirs_snap.items[theirs_i]
                 clone = NewItem(
                     type=t.type,
@@ -1368,10 +1383,12 @@ async def _apply_resolution(
                 membership[new_id] = ("active", None)
                 membership[theirs_i] = ("superseded", new_id)
         else:  # edited
-            key = r["details"].get("item_key")
+            key = details.get("item_key")
             new_id = await _insert_edited(s, rt, rc, commit_id, r["edited"], key)
             for iid, (st, sup) in {**ours_state, **theirs_state}.items():
                 membership[iid] = ("superseded", new_id) if st == "active" else (st, sup)
+            for rep in ours_reps + theirs_reps:
+                membership[rep] = ("superseded", new_id)
             membership[new_id] = ("active", None)
         return
 
@@ -1489,139 +1506,6 @@ async def pull(actor: Actor, repo: str, body: PullIn) -> dict[str, Any]:
                 {"ids": [uuid.UUID(u) for u in used]},
             )
     return {"context": result.text, "manifest": result.manifest}
-
-
-# ---------------------------------------------------------------------------- imports
-
-
-async def start_import(
-    actor: Actor,
-    repo: str,
-    data: bytes,
-    filename: str | None,
-    conversation: str | None,
-    branch: str | None,
-) -> dict[str, Any]:
-    rt = get_runtime()
-    if len(data) > rt.settings.max_upload_bytes:
-        raise ValidationFailed(f"upload exceeds {rt.settings.max_upload_bytes} bytes")
-    source, convs = parse_export(data, filename)
-    conv = select_conversation(convs, conversation)
-    upload_id = uuid.uuid4()
-    async with session_scope() as s:
-        rc = await _authorize(s, actor, repo, "editor")
-        target = await _write_branch(s, actor, rc, branch)
-    uri = await rt.blob.put(rc.id, upload_id, data)
-    async with session_scope() as s:
-        await s.execute(
-            text(
-                "INSERT INTO uploads (id, repo_id, created_by, branch, source, filename, "
-                "size_bytes, gcs_uri, content, conversation) VALUES (:id, :r, :u, :b, :src, "
-                ":fn, :sz, :uri, :content, :conv)"
-            ),
-            {
-                "id": upload_id,
-                "r": rc.id,
-                "u": actor.id,
-                "b": target,
-                "src": source,
-                "fn": filename,
-                "sz": len(data),
-                "uri": uri,
-                "content": None if uri else data,
-                "conv": conv.id or conv.title,
-            },
-        )
-    await tasks.enqueue("import", {"upload_id": str(upload_id)})
-    return {
-        "upload_id": str(upload_id),
-        "source": source,
-        "branch": target,
-        "conversation": {"id": conv.id, "title": conv.title, "messages": len(conv.messages)},
-        "status": "queued",
-    }
-
-
-@tasks.handler("import")
-async def _run_import(payload: dict[str, Any]) -> None:
-    rt = get_runtime()
-    upload_id = uuid.UUID(payload["upload_id"])
-    async with session_scope() as s:
-        u = (
-            (await s.execute(text("SELECT * FROM uploads WHERE id = :id"), {"id": upload_id}))
-            .mappings()
-            .first()
-        )
-        if u is None:
-            return
-        await s.execute(
-            text("UPDATE uploads SET status = 'running', error = NULL WHERE id = :id"),
-            {"id": upload_id},
-        )
-        email = (
-            await s.execute(text("SELECT email FROM users WHERE id = :u"), {"u": u["created_by"]})
-        ).scalar_one()
-    try:
-        data = u["content"] if u["content"] is not None else await rt.blob.get(u["gcs_uri"])
-        _, convs = parse_export(bytes(data), u["filename"])
-        conv = select_conversation(convs, u["conversation"])
-        items = await extract_items(rt.arbiter, conv, rt.settings.max_items_per_commit)
-        if not items:
-            raise ValidationFailed("no task state found in this conversation")
-        actor = Actor(id=u["created_by"], email=email)
-        result = await commit(
-            actor,
-            CommitIn(
-                repo=str(u["repo_id"]),
-                message=f"Import: {conv.title}"[:500],
-                items=items,
-                branch=u["branch"],
-                source_client="import",
-                source_model=u["source"],
-                auto_confirm=False,
-            ),
-        )
-        async with session_scope() as s:
-            await s.execute(
-                text("UPDATE uploads SET status = 'done', proposal_id = :p WHERE id = :id"),
-                {"p": uuid.UUID(result["proposal_id"]), "id": upload_id},
-            )
-    except Exception as e:
-        async with session_scope() as s:
-            await s.execute(
-                text("UPDATE uploads SET status = 'failed', error = :e WHERE id = :id"),
-                {"e": getattr(e, "message", str(e))[:2000], "id": upload_id},
-            )
-        raise
-
-
-async def get_import(actor: Actor, upload_id: uuid.UUID) -> dict[str, Any]:
-    async with session_scope() as s:
-        u = (
-            (
-                await s.execute(
-                    text(
-                        "SELECT id, repo_id, created_by, status, error, proposal_id, source, filename, "
-                        "conversation, created_at FROM uploads WHERE id = :id"
-                    ),
-                    {"id": upload_id},
-                )
-            )
-            .mappings()
-            .first()
-        )
-        if u is None:
-            raise NotFound("upload not found")
-        await _authorize_by_id(s, actor, u["repo_id"], "viewer")
-    out = _jsonable(
-        {
-            k: u[k]
-            for k in ("id", "status", "error", "source", "filename", "conversation", "created_at")
-        }
-    )
-    if u["proposal_id"] and u["created_by"] == actor.id:
-        out["proposal"] = await get_proposal(actor, u["proposal_id"])
-    return out
 
 
 # ---------------------------------------------------------------------------- helpers

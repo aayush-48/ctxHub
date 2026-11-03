@@ -6,7 +6,6 @@ import json
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -61,7 +60,7 @@ def _repo(c: Client, repo: str | None = None) -> str:
     r = repo or S.repo or c.cfg.repo
     if not r:
         fail("no repo selected; pass --repo or run `ctx use <repo>`")
-    return c.resolve_repo(r)
+    return r
 
 
 def emit(data: Any, human: Any = None) -> None:
@@ -131,7 +130,8 @@ def print_items(items: list[dict]) -> None:
         out.print(f"[bold]{typ.replace('_', ' ')}s[/bold]")
         for i in by_type[typ]:
             status = "" if i["status"] == "active" else f" [dim]({i['status']})[/dim]"
-            out.print(f"  [dim]{short(i['item_key'])}[/dim] {i['content']}{status}")
+            star = "★ " if i.get("pinned") else ""
+            out.print(f"  [dim]{short(i['item_key'])}[/dim] {star}{i['content']}{status}")
 
 
 # ----------------------------------------------------------------------------- auth
@@ -185,20 +185,6 @@ def whoami() -> None:
 
 
 @app.command()
-def repos() -> None:
-    """List repositories you can access."""
-    rows = _client().get("/repos")
-
-    def show(rows: list[dict]) -> None:
-        t = Table("name", "owner", "role", "id", box=None)
-        for r in rows:
-            t.add_row(r["name"], r["owner"], r["role"], short(r["id"]))
-        out.print(t)
-
-    emit(rows, show)
-
-
-@app.command()
 def init(
     name: str,
     description: Annotated[str | None, typer.Option("-d")] = None,
@@ -217,7 +203,7 @@ def init(
 def use(repo: str) -> None:
     """Set the default repo for later commands."""
     c = _client()
-    c.get(f"/repos/{c.resolve_repo(repo)}")
+    c.get(f"/repos/{repo}")
     c.cfg.repo = repo
     c.cfg.save()
     emit({"repo": repo}, f"Using [bold]{repo}[/bold]")
@@ -256,6 +242,17 @@ def items_cmd(
     c = _client()
     r = c.get(f"/repos/{_repo(c)}/items", ref=ref, all=str(all_).lower())
     emit(r, lambda r: print_items(r["items"]))
+
+
+@app.command()
+def pin(
+    item: Annotated[str, typer.Argument(help="Item id or key prefix (shown by `ctx items`).")],
+    off: Annotated[bool, typer.Option("--off", help="Unpin instead.")] = False,
+) -> None:
+    """Pin an item so renders never drop it (no commit is created)."""
+    c = _client()
+    r = c.post(f"/repos/{_repo(c)}/items/{item}/pin", {"pinned": not off})
+    emit(r, f"{'Unpinned' if off else 'Pinned'}: {r['content']}")
 
 
 # ----------------------------------------------------------------------------- commit
@@ -319,7 +316,7 @@ def confirm(
     accept: Annotated[str | None, typer.Option(help="Comma-separated entry ids.")] = None,
     choice: Annotated[list[str] | None, typer.Option(help="entry=keep_both|supersede|drop")] = None,
 ) -> None:
-    """Confirm a pending proposal (e.g. one made from a chat or an import)."""
+    """Confirm a pending proposal (for example one a chat model created)."""
     c = _client()
     body: dict[str, Any] = {}
     if accept:
@@ -328,68 +325,6 @@ def confirm(
         body["choices"] = dict(x.split("=", 1) for x in choice)
     done = c.post(f"/proposals/{proposal_id}/confirm", body)
     emit(done, f"Committed {short(done['commit'])} on {done['branch']}: {done['counts']}")
-
-
-@app.command("import")
-def import_(
-    file: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    conversation: Annotated[
-        str | None, typer.Option("-c", help="Conversation id or title.")
-    ] = None,
-    branch: Annotated[str | None, typer.Option("-b")] = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
-) -> None:
-    """Upload a Claude or ChatGPT data export and extract task state from one conversation."""
-    c = _client()
-    repo = _repo(c)
-    try:
-        with file.open("rb") as f:
-            up = c.request(
-                "POST",
-                f"/repos/{repo}/imports",
-                files={"file": (file.name, f, "application/octet-stream")},
-                data={
-                    k: v for k, v in {"conversation": conversation, "branch": branch}.items() if v
-                },
-            )
-    except ApiError as e:
-        if e.details and "conversations" in e.details:
-            if S.json:
-                fail(str(e), e.details)
-            t = Table("id", "title", "messages", box=None)
-            for cv in e.details["conversations"]:
-                t.add_row(cv["id"], cv["title"], str(cv["messages"]))
-            out.print(t)
-            fail("choose a conversation with -c <id or title>")
-        raise
-    if not S.json:
-        out.print(
-            f"Importing '{up['conversation']['title']}' "
-            f"({up['conversation']['messages']} messages)..."
-        )
-    deadline = time.time() + 900
-    while time.time() < deadline:
-        st = c.get(f"/imports/{up['upload_id']}")
-        if st["status"] in ("done", "failed"):
-            break
-        time.sleep(2)
-    else:
-        fail(
-            "import is still running; check later with `ctx import-status " + up["upload_id"] + "`"
-        )
-    if st["status"] == "failed":
-        fail(f"import failed: {st['error']}")
-    prop = st["proposal"]
-    _confirm_flow(c, {**prop, "committed": False}, yes)
-
-
-@app.command("import-status")
-def import_status(upload_id: str) -> None:
-    """Check an import."""
-    emit(_client().get(f"/imports/{upload_id}"))
-
-
-# ----------------------------------------------------------------------------- history
 
 
 @app.command()
@@ -739,7 +674,6 @@ def unshare(email: str) -> None:
 def settings(
     auto_commit: Annotated[bool | None, typer.Option(help="Auto-commit additive diffs.")] = None,
     auto_merge: Annotated[bool | None, typer.Option(help="Auto-merge without conflicts.")] = None,
-    llm: Annotated[bool | None, typer.Option(help="Use the LLM arbiter for this repo.")] = None,
 ) -> None:
     """View or change repo settings."""
     c = _client()
@@ -749,7 +683,6 @@ def settings(
         for k, v in {
             "auto_commit_additive": auto_commit,
             "auto_merge_additive": auto_merge,
-            "llm_enabled": llm,
         }.items()
         if v is not None
     }
@@ -767,7 +700,7 @@ def delete_repo(repo: str, yes: Annotated[bool, typer.Option("--yes")] = False) 
     if not yes and not typer.confirm(f"Permanently delete {repo}? This cannot be undone."):
         raise typer.Exit(1)
     c = _client()
-    c.delete(f"/repos/{c.resolve_repo(repo)}")
+    c.delete(f"/repos/{repo}")
     emit({"deleted": repo}, f"Deleted {repo}")
 
 
