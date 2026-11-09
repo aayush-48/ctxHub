@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import itertools
+import json
 import re
 import secrets
 from urllib.parse import parse_qs, urlparse
@@ -168,21 +169,23 @@ async def test_full_flow_rest_and_mcp(client):
     )
     assert init["result"]["serverInfo"]["name"] == "ctx"
     tools = await mcp_call(client, tok["access_token"], "tools/list")
-    names = {t["name"] for t in tools["result"]["tools"]}
-    assert {
-        "ctx_status",
+    by_name = {t["name"]: t for t in tools["result"]["tools"]}
+    model_tools = {
+        n
+        for n, t in by_name.items()
+        if t.get("_meta", {}).get("ui", {}).get("visibility") != ["app"]
+    }
+    assert model_tools == {
+        "ctx_stored",
         "ctx_commit",
         "ctx_confirm",
-        "ctx_log",
-        "ctx_diff",
-        "ctx_branch",
-        "ctx_checkout",
-        "ctx_merge",
-        "ctx_resolve",
         "ctx_pull",
-        "ctx_stored",
-        "ctx_revert",
-    } <= names
+        "ctx_inspect",
+        "ctx_manage",
+    }
+    # Lean schemas: no generated titles or null-unions.
+    assert '"title"' not in json.dumps([by_name[n]["inputSchema"] for n in model_tools])
+    assert '"type": "null"' not in json.dumps([by_name[n]["inputSchema"] for n in model_tools])
 
     res = await mcp_call(
         client,
@@ -211,6 +214,18 @@ async def test_full_flow_rest_and_mcp(client):
     )
     out = res["result"]["structuredContent"]
     assert out["committed"] is True
+    # Compact: one line per entry; the view fetches the full proposal itself.
+    assert out["entries"] == ["e1 add · Primary datastore", "e2 add · ChatGPT write tools"]
+    assert out["ui"] == {"tool": "ctx_app_proposal", "args": {"proposal_id": out["proposal_id"]}}
+    full = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_app_proposal", "arguments": {"proposal_id": out["proposal_id"]}},
+    )
+    assert full["result"]["structuredContent"]["entries"][0]["item"]["content"].startswith(
+        "Use Cloud SQL"
+    )
 
     res = await mcp_call(
         client,
@@ -224,6 +239,7 @@ async def test_full_flow_rest_and_mcp(client):
     pulled = res["result"]["structuredContent"]
     ctx = pulled["context"]
     assert "<decisions>" in ctx and "pgvector" in ctx
+    assert "[id:" not in ctx  # ids come from ctx_stored, for models that edit
     # The model gets the context and a short summary, not the items a second time.
     assert "manifest" not in pulled and pulled["summary"]["included"] == 2
     assert "pgvector" not in str(pulled["summary"])
@@ -251,15 +267,48 @@ async def test_full_flow_rest_and_mcp(client):
     )
     [line] = [c["text"] for c in res["result"]["content"] if c["type"] == "text"]
     assert "2 active items" in line and "decision | Primary datastore:" in line
-    assert "[id:" in line
+    assert "[id:" in line and "RULES FOR ctx_commit" in line
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_stored", "arguments": {"repo": "llm-context-vc", "rules": False}},
+    )
+    assert "RULES" not in res["result"]["content"][0]["text"]
+
+    # Rare operations share two tools; log is compact for the model.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_inspect", "arguments": {"repo": "llm-context-vc", "action": "log"}},
+    )
+    log = res["result"]["structuredContent"]
+    assert log["view"] == "history" and log["ui"]["tool"] == "ctx_app_inspect"
+    assert any("Chose storage layer" in c for c in log["commits"])
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {
+            "name": "ctx_manage",
+            "arguments": {"repo": "llm-context-vc", "action": "branch", "args": {"name": "alt"}},
+        },
+    )
+    assert res["result"]["structuredContent"]["view"] == "done"
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_manage", "arguments": {"repo": "llm-context-vc", "action": "checkout"}},
+    )
+    assert res["result"]["isError"] is True and "args.ref" in res["result"]["content"][0]["text"]
 
     # MCP Apps: view tools point at the in-chat app; helpers are hidden from the model.
-    by_name = {t["name"]: t for t in tools["result"]["tools"]}
     assert by_name["ctx_commit"]["_meta"]["ui"]["resourceUri"] == "ui://ctx/app.html"
     assert by_name["ctx_app_show"]["_meta"]["ui"]["visibility"] == ["app"]
     assert by_name["ctx_app_pull"]["_meta"]["ui"]["visibility"] == ["app"]
     assert "ui" not in by_name["ctx_stored"].get("_meta", {})  # no view pops up for it
-    assert "_meta" not in by_name["ctx_init"] or "ui" not in by_name["ctx_init"]["_meta"]
     assert out["view"] == "commit"
     res = await mcp_call(
         client, tok["access_token"], "resources/read", {"uri": "ui://ctx/app.html"}
@@ -274,7 +323,7 @@ async def test_full_flow_rest_and_mcp(client):
         client,
         tok["access_token"],
         "tools/call",
-        {"name": "ctx_status", "arguments": {"repo": "does-not-exist"}},
+        {"name": "ctx_inspect", "arguments": {"repo": "does-not-exist", "action": "status"}},
     )
     assert res["result"]["isError"] is True
     assert "not_found" in res["result"]["content"][0]["text"]

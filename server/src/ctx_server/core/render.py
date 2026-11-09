@@ -83,7 +83,7 @@ def _template_name(template: str, model: str) -> str:
     return {"claude": "claude", "gpt": "gpt"}.get(fam, "plain")
 
 
-def _item_lines(settings: Settings, snap: Snapshot) -> list[_Line]:
+def _item_lines(settings: Settings, snap: Snapshot, ids: bool = True) -> list[_Line]:
     now = datetime.now(UTC)
     replaced_by: dict[Any, list[SnapItem]] = {}
     for i in snap.items.values():
@@ -99,7 +99,7 @@ def _item_lines(settings: Settings, snap: Snapshot) -> list[_Line]:
             use_count=i.use_count,
             pinned=i.pinned,
         )
-        tag = f" [id:{i.item_key.hex[:8]}]"
+        tag = f" [id:{i.item_key.hex[:8]}]" if ids else ""
         full = _flat(i.content)
         reason = i.attributes.get("reason")
         if reason and i.type == "decision":
@@ -133,13 +133,14 @@ async def render(
     template: str = "auto",
     allow_drop_constraints: bool = False,
     conflicts: list[str] | None = None,
+    ids: bool = True,
 ) -> RenderResult:
     tmpl_name = _template_name(template, model)
     family = target_family(model)  # tokens are counted for the target model, whatever template
     tmpl = _env.get_template(f"{tmpl_name}.j2")
     esc = _xml_escape if tmpl_name == "claude" else (lambda s: s)
 
-    lines = _item_lines(settings, snap)
+    lines = _item_lines(settings, snap, ids)
     for c in conflicts or []:
         lines.append(_Line(kind="conflict", importance=1.0, full=_flat(c), short=None))
     lines.sort(key=lambda ln: (TIER[ln.kind], -ln.importance))

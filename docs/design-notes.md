@@ -38,6 +38,33 @@ unnecessary flags on commits of many different subjects, every in-commit conflic
 merge conflict recall 1.00 at precision 0.92, and a median commit time of 0.66 s, against 2–17 s with
 the earlier server-side LLM.
 
+## Token economy for the user's chat model
+
+Every tool definition is sent with each message, and every tool result stays in the chat, so
+their size is a cost the user pays. Measures (sizes in o200k tokens, checked in CI by
+`server/tests/test_token_budget.py`):
+
+| | Before | Now |
+|---|---|---|
+| Tool definitions per message | 4,431 (14 tools) | ~1,500 (6 tools) |
+| Rules for writing items | inside `ctx_commit`'s description, every message | ~350, returned by `ctx_stored` only when committing (`rules=false` skips them on later commits) |
+| Commit result, 16 items | 1,965 | ~260: one line per entry, details only for flags, replacements and drops |
+| Pull context, 16 items | 400 | ~280: chat pulls leave out `[id:…]` tags (`ctx_stored` gives ids) |
+
+- Rare operations share two tools: `ctx_inspect` (read-only: status, log, diff) and
+  `ctx_manage` (init, branch, checkout, merge, resolve, revert, pin), each with an `action` and
+  an `args` object described in one line per action. The read-only one keeps its read-only
+  annotation, so hosts do not ask for approval more often.
+- Not a fully generic `ctx(action, args)` with on-demand help: one annotation for everything
+  would make hosts ask for approval on every read, clients could not check arguments, the
+  first use of each action would need an extra call, and hosts such as Claude Code already
+  load MCP tools on demand.
+- Generated schema noise (titles, `anyOf [X, null]`) is stripped from the published schemas;
+  calls are still validated against the full pydantic models.
+- Views get full data through view-only helpers (`ctx_app_proposal`, `ctx_app_inspect`,
+  `ctx_app_pull`, …; visibility `app`), so a compact result for the model does not limit what
+  the view shows.
+
 ## Deviations
 
 - **Repo names are globally unique** (case-insensitive), so a repo is addressed by its name

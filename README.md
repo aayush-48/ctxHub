@@ -190,19 +190,22 @@ Then ask the model things like:
 - "Commit the decisions we've made so far to launch-plan."
 - "Branch launch-plan as *pricing-b* and commit this alternative there."
 - "Merge pricing-b into main." The model shows you any conflicts and asks how to resolve them.
-- In a new chat or another model: "Pull launch-plan with a 3000-token budget."
+- In a new chat or another model: "Pull launch-plan" (pick a size in the view), or "Pull launch-plan at 1500 tokens".
 
 | MCP tool | Does |
 |---|---|
-| `ctx_init` | Create a repository (names are globally unique) |
-| `ctx_status`, `ctx_log`, `ctx_diff` | Inspect state and history |
+| `ctx_stored` | Called before every commit: one short line per stored item (id, type, subject) plus the rules for writing items. No view |
 | `ctx_commit`, `ctx_confirm` | Propose a commit, then write it after you agree |
-| `ctx_branch`, `ctx_checkout` | Branch and move |
-| `ctx_merge` (start / complete / abort), `ctx_resolve` | Semantic merge and conflict resolution |
 | `ctx_pull` | Load the state into the chat. Without a size, the user picks one in the view first (minimum / recommended / full) and the model gets nothing until then; with `token_budget`, the context loads directly |
-| `ctx_stored` | One short line per stored item (id, type, subject), read before committing; no view |
-| `ctx_pin` | Pin an item so renders never drop it (no commit) |
-| `ctx_revert` | Undo a commit with a new commit |
+| `ctx_inspect` (read-only) | `status`, `log`, `diff` |
+| `ctx_manage` | `init` (names are globally unique), `branch`, `checkout`, `merge`, `merge_complete`, `merge_abort`, `resolve`, `revert` (a new commit), `pin` (no commit) |
+
+**Token cost.** Everything the chat model reads is kept small, and CI checks the sizes
+(`server/tests/test_token_budget.py`). The six tool definitions total about 1,500 tokens per
+message. The rules for writing items (about 350 tokens) load only when committing, inside the
+`ctx_stored` result. Results are compact: a 16-item commit comes back in about 260 tokens, one
+line per entry. Chat pulls leave out item ids. The in-chat views fetch full data through
+view-only helpers the model never sees.
 
 ### In-chat views (MCP Apps)
 
@@ -212,10 +215,10 @@ In clients that support [MCP Apps](https://modelcontextprotocol.io/specification
 | View | Opens on | What you can do |
 |---|---|---|
 | Commit review | `ctx_commit` | Untick entries, choose keep/replace/skip for flagged ones, Confirm or Discard |
-| Status | `ctx_status` | Counts by type, pending merges (open the resolver), jump to history or pull |
-| History | `ctx_log` | Commit graph with branches and merges; click a commit for its diff and pipeline decisions |
-| Diff | `ctx_diff` | Changes between two refs; pick other refs to compare |
-| Conflict resolver | `ctx_merge`, `ctx_resolve` | Original, this branch and incoming side by side; keep either, both, or edit; complete or abort |
+| Status | `ctx_inspect` status | Counts by type, pending merges (open the resolver), jump to history or pull |
+| History | `ctx_inspect` log | Commit graph with branches and merges; click a commit for its diff and pipeline decisions |
+| Diff | `ctx_inspect` diff | Changes between two refs; pick other refs to compare |
+| Conflict resolver | `ctx_manage` merge / resolve | Original, this branch and incoming side by side; keep either, both, or edit; complete or abort |
 | Pull and budget | `ctx_pull` | Slider from **Minimum** (constraints and pinned items) through **Recommended** (every item, shortened where possible) to **Full**; live preview of what is kept, shortened or dropped; pin/unpin; **Load into chat** sends the chosen size |
 
 Every button calls the same tools, so the model stays informed: the view also tells the model what

@@ -1529,6 +1529,7 @@ async def pull(actor: Actor, repo: str, body: PullIn, record_use: bool = True) -
             template=body.template,
             allow_drop_constraints=body.allow_drop_constraints,
             conflicts=warnings,
+            ids=body.ids,
         )
     used = result.manifest.pop("used_item_ids")
     if used and record_use:

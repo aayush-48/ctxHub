@@ -241,10 +241,11 @@ The server does not read conversations; your chat model does.
 ## 9. Claude and ChatGPT (MCP)
 
 - [ ] **9.1 Connect.** Claude: Settings → Connectors → Add custom connector → `$URL/mcp`.
-- [ ] **9.2 Tools list.** Ask "What ctx tools do you have?". *Expect:* 13 tools (no repo listing: you open repos by name).
+- [ ] **9.2 Tools list.** Ask "What ctx tools do you have?". *Expect:* six tools: `ctx_stored`, `ctx_commit`, `ctx_confirm`, `ctx_pull`, `ctx_inspect`, `ctx_manage` (no repo listing: you open repos by name).
 - [ ] **9.3 Commit from chat.** Discuss a plan, then "Commit our decisions to testing."
-  *Expect:* the model calls `ctx_commit`, and either reports the commit or shows the diff and
-  asks you before calling `ctx_confirm`.
+  *Expect:* the model calls `ctx_stored` (which returns the commit rules), then `ctx_commit`,
+  and either reports the commit or shows the diff and asks you before calling `ctx_confirm`.
+  The commit result Claude reads is one line per entry; the review view still shows full items.
 - [ ] **9.4 The model never confirms without asking.** Make a contradicting decision and ask
   it to commit. *Expect:* it shows the supersede and waits for you.
 - [ ] **9.5 Branch and merge from chat.** "Branch testing as pricing-b, commit this alternative

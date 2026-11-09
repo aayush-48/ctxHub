@@ -36,7 +36,27 @@ function Header({ title, sub }: { title: string; sub?: React.ReactNode }) {
 
 const Err = ({ msg }: { msg: string | null }) => (msg ? <div className="error">{msg}</div> : null);
 
+// Results the model reads are compact; when one names a view-only helper (`ui`), fetch the
+// full data from it before rendering.
 export function View(props: Props) {
+  const { app, data } = props;
+  const [full, setFull] = useState<Data | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const fetch = data.ui as { tool: string; args: Data } | undefined;
+  useEffect(() => {
+    setFull(null);
+    setFailed(null);
+    if (!fetch) return;
+    callTool(app, fetch.tool, fetch.args)
+      .then((d) => setFull({ ...data, ...d, view: data.view, ui: undefined }))
+      .catch((e) => setFailed(e instanceof ToolFailure ? e.message : String(e)));
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (fetch && failed) return <div className="box error">{failed}</div>;
+  if (fetch && !full) return <div className="box muted">Loading…</div>;
+  return <ViewFor {...props} data={full ?? data} />;
+}
+
+function ViewFor(props: Props) {
   switch (props.data.view) {
     case "commit":
       return props.data.committed ? <Committed {...props} /> : <CommitReview {...props} />;
@@ -56,6 +76,8 @@ export function View(props: Props) {
       return <ConflictResolver {...props} />;
     case "pull":
       return <PullView {...props} />;
+    case "done":
+      return <div className="box"><Header title={props.data.message || "Done"} sub={props.data.repo} /></div>;
     case "pin":
       return (
         <div className="box">
@@ -214,10 +236,10 @@ function StatusPanel({ app, data, onData }: Props) {
       {data.pending_proposals > 0 && <p className="muted small">{data.pending_proposals} proposal(s) waiting for confirmation.</p>}
       <Err msg={error} />
       <div className="actions">
-        <button disabled={busy} onClick={() => run(async () => onData(await call("ctx_log", { repo: data.repo, all_branches: true, limit: 100 })))}>
+        <button disabled={busy} onClick={() => run(async () => onData(await call("ctx_app_inspect", { repo: data.repo, action: "log", args: { all_branches: true, limit: 100 } })))}>
           History
         </button>
-        <button disabled={busy} onClick={() => run(async () => onData(await call("ctx_diff", { repo: data.repo })))}>
+        <button disabled={busy} onClick={() => run(async () => onData(await call("ctx_app_inspect", { repo: data.repo, action: "diff" })))}>
           Last change
         </button>
         <button className="primary" disabled={busy}
@@ -311,7 +333,7 @@ function DiffViewer({ app, data, onData }: Props) {
   const { busy, error, run, call } = useAction(app);
   const compare = (e: React.FormEvent) => {
     e.preventDefault();
-    run(async () => onData(await call("ctx_diff", { repo: data.repo, from_ref: from, to_ref: to })));
+    run(async () => onData(await call("ctx_app_inspect", { repo: data.repo, action: "diff", args: { from_ref: from, to_ref: to } })));
   };
   return (
     <div className="box">
@@ -369,8 +391,8 @@ function ConflictResolver({ app, data, onData }: Props) {
 
   const resolve = (c: Data, choice: string, edited?: Data) =>
     run(async () => {
-      const res = await call("ctx_resolve", {
-        merge_id: data.merge_id, conflict_id: c.conflict_id, choice, edited,
+      const res = await call("ctx_manage", {
+        action: "resolve", args: { merge_id: data.merge_id, conflict_id: c.conflict_id, choice, edited },
       });
       setResolved((r) => ({ ...r, [c.conflict_id]: choice }));
       setEditing(null);
@@ -383,7 +405,10 @@ function ConflictResolver({ app, data, onData }: Props) {
 
   const finish = (action: "complete" | "abort") =>
     run(async () => {
-      const res = await call("ctx_merge", { repo: repo.current, action, merge_id: data.merge_id });
+      const res = await call("ctx_manage", {
+        repo: repo.current, action: action === "complete" ? "merge_complete" : "merge_abort",
+        args: { merge_id: data.merge_id },
+      });
       onData({ ...res, repo: repo.current });
       await tellModel(app, `The user chose to ${action} merge ${data.merge_id} in the ctx view.`);
     });
@@ -480,7 +505,7 @@ function PullView({ app, data }: Props) {
 
   const pin = (it: Data) =>
     run(async () => {
-      await call("ctx_pin", { repo: data.repo, item: it.item_key, pinned: !it.pinned });
+      await call("ctx_manage", { repo: data.repo, action: "pin", args: { item: it.item_key, pinned: !it.pinned } });
       const r = await fetchRender(budget, model);
       const min = r.manifest?.sizes?.minimum;
       if (min && budget < min) onBudget(min); // pinning can raise the minimum

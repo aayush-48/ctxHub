@@ -145,6 +145,9 @@ class PullIn(_Strict):
     # None: the recommended size (every item, shortened where possible, nothing dropped).
     budget: int | None = Field(default=None, ge=50, le=200_000)
     template: Literal["auto", "claude", "gpt", "plain"] = "auto"
+    # [id:xxxxxxxx] after each item, for models that will edit the repo (ctx_stored gives
+    # them too); left out of chat pulls to save tokens.
+    ids: bool = True
     allow_drop_constraints: bool = False
 
 
