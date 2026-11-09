@@ -185,12 +185,15 @@ ctx init testing
   *Expect:* XML-style `<context>` sections for Claude; Markdown headings for GPT.
 - [ ] **6.2 Budget is respected.** `ctx --json pull --budget 300`
   *Expect:* `manifest.tokens` ≤ 300; `dropped` and `compressed` list what was left out.
-- [ ] **6.3 Compression before dropping.** Commit `examples/many-facts.json`, then
-  `ctx pull --budget 350`.
-  *Expect:* the status line shows some items compressed (short forms) before any are dropped.
+- [ ] **6.3 Sizes.** `ctx pull` with no budget.
+  *Expect:* a second status line `sizes: minimum A · recommended B · full C`, and the pull uses
+  B with **0 dropped**. `ctx pull --budget C` shows 0 shortened; a budget between B and C shows
+  some shortened and still 0 dropped (every item is shortened before any is dropped); a budget
+  below B drops the lowest-priority items.
 - [ ] **6.4 Constraints are never dropped silently.** At any budget, `ctx pull --budget 200`
   still contains every constraint, even when other items are dropped. Only if the constraints
-  alone exceed the budget do you get an error asking for a bigger one;
+  alone exceed the budget do you get an error asking for a bigger one (it includes
+  `minimum_budget`);
   `--allow-drop-constraints` overrides that.
 - [ ] **6.5 Item ids in renders.** Each line ends with `[id:xxxxxxxx]`, which a model can use in
   `replaces` or `updates`.
@@ -278,15 +281,25 @@ basic-host (see the README's Development section):
   *Expect:* original / this branch / incoming side by side. Try **Keep incoming**, and on another
   run **Edit…** with your own text. After the last conflict the card says "Merged". **Abort
   merge** cancels instead.
-- [ ] **9b.7 Pull and budget.** "Pull <repo> for Claude". *Expect:* a token meter, a budget slider
-  and model picker that re-render, and every item with its state (full / compressed / dropped).
-  Drag the budget down until items drop, click ☆ on a dropped item: it turns ★ and is no longer
-  dropped. **Copy** copies the context; **Use in this chat** hands it to the model.
+- [ ] **9b.7 Pull and budget.** "Pull <repo>". *Expect:* Claude calls `ctx_pull` without a size
+  and says it is waiting; the view shows **Minimum / Recommended / Full** marks and the slider
+  starts at Recommended. Dragging updates the preview (kept / shortened / dropped per item)
+  without anything reaching Claude. **Load into chat (N tokens)** adds the context and posts
+  "Loaded <repo> into the chat"; Claude then answers from it. Changing the size afterwards offers
+  **Replace with this size**. Pinning a dropped item keeps it and can raise the minimum.
+  Saying "pull <repo> at 800 tokens" loads directly, without waiting.
+- [ ] **9b.7b Committing does not pull.** Ask Claude to commit something to a repo with items.
+  *Expect:* Claude calls `ctx_stored` (no view appears) and then `ctx_commit`; no pull view.
 - [ ] **9b.8 Pin from the CLI.** `ctx pin <item>` and `ctx pin <item> --off`; `ctx items` shows ★.
 - [ ] **9b.9 Without MCP Apps.** In a client without Apps support (or the MCP Inspector), the same
   tools still return their full results as text.
 
 ## 10. Web viewer
+
+- [ ] **10.0 Your repositories.** The home page lists repos you own under "Owned by you" and
+  repos shared with you under "Shared with you" with your role and the owner. After
+  `ctx unshare`, the shared repo disappears from the other person's list on reload. Repos you
+  have no access to never appear.
 
 - [ ] **10.1 History tab.** The commit graph shows branches as colored lanes and merges joining
   them; branch names label their heads.

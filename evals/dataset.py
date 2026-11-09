@@ -424,3 +424,95 @@ def render_transcript(sessions: list[list[tuple[str, str]]]) -> str:
         parts.append(f"--- Session {n} ---")
         parts += [f"{'User' if r == 'user' else 'Assistant'}: {t}" for r, t in msgs]
     return "\n".join(parts)
+
+
+# A real commit from user testing (a road-hazard detection project): 18 different facts about
+# one project, with closely related subjects. Nothing here conflicts, so no entry should be
+# flagged. With subject threshold 0.85 six of them were.
+def _f(subject: str, content: str, type_: str = "fact") -> dict:
+    return {"type": type_, "subject": subject, "content": content}
+
+
+RELATED_SUBJECTS_COMMIT: list[dict] = [
+    _f(
+        "Project scope",
+        "Slides are for Volkswagen Group's i.mobilothon 5.0: a road-hazard "
+        "(potholes, bumps, debris, stalled vehicles) detection and alert system.",
+    ),
+    _f(
+        "Vehicle sensors",
+        "Sensors: 4-6 cameras (front/sides), GPS for absolute position, IMU "
+        "for acceleration/magnitude, and CAN bus for speed and steering.",
+    ),
+    _f(
+        "Keyframe sampling",
+        "Adaptive Keyframe Sampling (AKS) processes only key frames and "
+        "skips static ones, saving 40-60% compute.",
+    ),
+    _f(
+        "Image composition",
+        "Composite image pipeline uses OpenCV: fisheye distortion "
+        "correction, Inverse Perspective Mapping, and multi-band blending into a unified frame.",
+    ),
+    _f(
+        "Image dehazing",
+        "If image quality is poor (foggy, hazy, low light), a GAN dehazes the "
+        "frame before feature extraction.",
+    ),
+    _f(
+        "Detection head",
+        "Detection head uses DEIMv2 (DINOv3 features) for potholes/bumps/"
+        "debris; stalled vehicles use Farneback optical flow plus DEIMv2-S.",
+    ),
+    _f(
+        "Segmentation and depth",
+        "Segmentation: U-Net-lite/BiSeNet; depth/severity: "
+        "MiDaS-small; road mask: Fast-SCNN; tracking: SORT/StrongSORT.",
+    ),
+    _f(
+        "Privacy blur",
+        "On-device privacy blur before upload: MediaPipe for faces, "
+        "OpenALPR-Lite for plates, Gaussian blur.",
+    ),
+    _f(
+        "Fusion engine",
+        "Fusion engine combines detection confidence, tracking persistence, "
+        "segmentation area, depth, optical flow and IMU bump verification into a score.",
+    ),
+    _f(
+        "Driver verification",
+        "Low-confidence hazards go to trusted drivers for GenAI voice "
+        "verification (blurred thumbnail, Yes/No/Unsure via STT, Bayesian trust update).",
+    ),
+    _f(
+        "Feedback learning",
+        "Feedback learning uses PPO with local training from global data "
+        "to update weights and reduce false positives.",
+    ),
+    _f(
+        "Alert system",
+        "Online: publish to cloud via MQTT/HTTPS; offline: local cache. Nearby "
+        "drivers alerted via V2X/DSRC with Haversine geofencing.",
+    ),
+    _f(
+        "OEM cost",
+        "OEM-integrated (VW SoC) path costs about Rs 4,000-9,000 per vehicle per "
+        "year, with Rs 0 hardware amortization.",
+    ),
+    _f(
+        "Competitor cost benchmark",
+        "Competitors per year: Nexar-class Rs 18-22k, Mobileye 8 "
+        "Connect Rs 18-25k, Ford BlueCruise ~Rs 42k, Tesla FSD ~Rs 1,01,000.",
+    ),
+    _f(
+        "Model comparison",
+        "DEIMv2-S vs YOLO11-S: mAP 50.9 vs 47.0, params 9.7M vs 9.4M, "
+        "GFLOPs 24.3 vs 21.5, inference ~5.8 ms vs 2.5 ms.",
+    ),
+    _f(
+        "Detector choice",
+        "DEIMv2 chosen over YOLO for higher accuracy (about 9% fewer missed "
+        "hazards) at similar model size, running on VW's existing SoCs.",
+        "decision",
+    ),
+]

@@ -180,6 +180,7 @@ async def test_full_flow_rest_and_mcp(client):
         "ctx_merge",
         "ctx_resolve",
         "ctx_pull",
+        "ctx_stored",
         "ctx_revert",
     } <= names
 
@@ -220,13 +221,44 @@ async def test_full_flow_rest_and_mcp(client):
             "arguments": {"repo": "llm-context-vc", "target_model": "claude", "token_budget": 1000},
         },
     )
-    ctx = res["result"]["structuredContent"]["context"]
+    pulled = res["result"]["structuredContent"]
+    ctx = pulled["context"]
     assert "<decisions>" in ctx and "pgvector" in ctx
+    # The model gets the context and a short summary, not the items a second time.
+    assert "manifest" not in pulled and pulled["summary"]["included"] == 2
+    assert "pgvector" not in str(pulled["summary"])
+
+    # Without a size, nothing is loaded: the model gets the sizes and waits for the user.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_pull", "arguments": {"repo": "llm-context-vc"}},
+    )
+    waiting = res["result"]["structuredContent"]
+    assert waiting["waiting_for_user"] is True and "context" not in waiting
+    assert (
+        waiting["sizes"]["minimum"] <= waiting["sizes"]["recommended"] <= waiting["sizes"]["full"]
+    )
+    assert "pgvector" not in str(res["result"])
+
+    # Before committing, the model reads one short line per stored item.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_stored", "arguments": {"repo": "llm-context-vc"}},
+    )
+    [line] = [c["text"] for c in res["result"]["content"] if c["type"] == "text"]
+    assert "2 active items" in line and "decision | Primary datastore:" in line
+    assert "[id:" in line
 
     # MCP Apps: view tools point at the in-chat app; helpers are hidden from the model.
     by_name = {t["name"]: t for t in tools["result"]["tools"]}
     assert by_name["ctx_commit"]["_meta"]["ui"]["resourceUri"] == "ui://ctx/app.html"
     assert by_name["ctx_app_show"]["_meta"]["ui"]["visibility"] == ["app"]
+    assert by_name["ctx_app_pull"]["_meta"]["ui"]["visibility"] == ["app"]
+    assert "ui" not in by_name["ctx_stored"].get("_meta", {})  # no view pops up for it
     assert "_meta" not in by_name["ctx_init"] or "ui" not in by_name["ctx_init"]["_meta"]
     assert out["view"] == "commit"
     res = await mcp_call(

@@ -215,8 +215,20 @@ async def eval_noise(service, actor, seed: int, n: int) -> dict[str, Any]:
         )
         planted += 1
         caught += r["entries"][1]["action"] == "flag"
+    # One real project commit with closely related subjects, in one commit and split in two.
+    from .dataset import RELATED_SUBJECTS_COMMIT as related
+
+    related_flags = 0
+    for parts in ([related], [related[::2], related[1::2]]):
+        repo = await _new_repo(service, actor)
+        for part in parts:
+            r = await _commit_all(service, actor, repo, part)
+            related_flags += sum(e["action"] != "add" for e in r["entries"])
+    noisy += related_flags
+    total += 2 * len(related)
     return {
         "cases": n,
+        "related_subject_flags": related_flags,
         "clean_entries": total,
         "unnecessary_flag_rate": round(noisy / total, 4) if total else None,
         "clean_commit_precision": round(1 - noisy / total, 4) if total else None,
@@ -445,6 +457,9 @@ def main() -> None:
     os.environ.setdefault("CTX_STORAGE_PROVIDER", "db")
     if not args.real:
         os.environ["CTX_EMBEDDING_PROVIDER"] = "fake"
+    elif os.environ.get("CTX_EMBEDDING_PROVIDER", "fake") == "fake":
+        # .env usually says "fake" for local development; --real means real embeddings.
+        os.environ["CTX_EMBEDDING_PROVIDER"] = "vertex"
 
     with ExitStack() as stack:
         if not os.environ.get("CTX_DATABASE_URL"):

@@ -218,6 +218,30 @@ async def get_repo(actor: Actor, repo: str) -> dict[str, Any]:
     }
 
 
+async def list_my_repos(actor: Actor) -> list[dict[str, Any]]:
+    """Repositories the caller is a member of (owner, editor or viewer), most recently active
+    first. Only the caller's own memberships are read, so no other repo names are revealed."""
+    async with session_scope() as s:
+        rows = (
+            (
+                await s.execute(
+                    text(
+                        "SELECT r.name, r.description, m.role, u.email AS owner, r.created_at, "
+                        "  (SELECT max(c.created_at) FROM commits c WHERE c.repo_id = r.id) "
+                        "    AS updated_at "
+                        "FROM repo_members m JOIN repos r ON r.id = m.repo_id "
+                        "JOIN users u ON u.id = r.owner_id "
+                        "WHERE m.user_id = :u ORDER BY updated_at DESC NULLS LAST, r.name"
+                    ),
+                    {"u": actor.id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return [_jsonable(dict(r)) for r in rows]
+
+
 async def update_repo_settings(actor: Actor, repo: str, body: RepoSettingsIn) -> dict[str, Any]:
     async with session_scope() as s:
         rc = await _authorize(s, actor, repo, "owner")
@@ -1466,7 +1490,9 @@ async def abort_merge(actor: Actor, merge_id: uuid.UUID) -> dict[str, Any]:
 # ---------------------------------------------------------------------------- pull
 
 
-async def pull(actor: Actor, repo: str, body: PullIn) -> dict[str, Any]:
+async def pull(actor: Actor, repo: str, body: PullIn, record_use: bool = True) -> dict[str, Any]:
+    """Render the state. record_use=False for previews that no model reads, so they do not
+    raise the items' use counts (which feed importance)."""
     rt = get_runtime()
     async with session_scope() as s:
         rc = await _authorize(s, actor, repo, "viewer")
@@ -1505,7 +1531,7 @@ async def pull(actor: Actor, repo: str, body: PullIn) -> dict[str, Any]:
             conflicts=warnings,
         )
     used = result.manifest.pop("used_item_ids")
-    if used:
+    if used and record_use:
         async with session_scope() as s:
             await s.execute(
                 text("UPDATE state_items SET use_count = use_count + 1 WHERE id = ANY(:ids)"),

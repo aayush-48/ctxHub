@@ -604,7 +604,9 @@ def _copy(text: str) -> bool:
 @app.command()
 def pull(
     model: Annotated[str, typer.Option(help="Target model: claude, gpt-5, ...")] = "claude",
-    budget: Annotated[int, typer.Option(help="Token budget.")] = 4000,
+    budget: Annotated[
+        int | None, typer.Option(help="Token budget (default: the recommended size).")
+    ] = None,
     ref: Annotated[str | None, typer.Option()] = None,
     copy: Annotated[bool, typer.Option(help="Copy to the clipboard.")] = False,
     output: Annotated[Path | None, typer.Option("-o")] = None,
@@ -634,9 +636,14 @@ def pull(
     exact = "" if m["token_count_exact"] else " (estimated)"
     err.print(
         f"[dim]{m['tokens']}/{m['budget']} tokens{exact} · {m['included']} items · "
-        f"{len(m['compressed'])} compressed · {len(m['dropped'])} dropped · "
+        f"{len(m['compressed'])} shortened · {len(m['dropped'])} dropped · "
         f"template {m['template']}[/dim]"
     )
+    if sizes := m.get("sizes"):
+        err.print(
+            f"[dim]sizes: minimum {sizes['minimum']} · recommended {sizes['recommended']} · "
+            f"full {sizes['full']} (choose with --budget)[/dim]"
+        )
 
 
 # ----------------------------------------------------------------------------- sharing

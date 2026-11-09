@@ -109,3 +109,6 @@ textarea { width: 100%; resize: vertical; }
 .state { font-size: 11px; color: var(--muted); }
 .state.compressed { color: var(--sup); } .state.dropped { color: var(--del); }
 .context { background: var(--soft); border-radius: 8px; padding: 10px; white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.marks { display: flex; gap: 6px; margin: 8px 0 2px; flex-wrap: wrap; }
+.mark { flex: 1; min-width: 88px; font-size: 12px; line-height: 1.3; padding: 6px 8px; text-align: center; }
+.mark.on { border-color: var(--accent); color: var(--accent); }

@@ -81,58 +81,74 @@ function Shell(props: { email?: string; onHome?: () => void; children: React.Rea
   );
 }
 
-// Repos opened in this browser, newest first. A per-browser convenience only.
-const RECENT_KEY = "ctx.recentRepos";
+// Repos you own or that were shared with you, from GET /api/v1/repos.
+type RepoRow = {
+  name: string; description?: string | null; role: "owner" | "editor" | "viewer";
+  owner: string; created_at: string; updated_at?: string | null;
+};
 
-function recentRepos(): string[] {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
-  } catch {
-    return [];
-  }
+function when(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
-function rememberRepo(name: string) {
-  try {
-    const next = [name, ...recentRepos().filter((n) => n.toLowerCase() !== name.toLowerCase())];
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, 8)));
-  } catch {
-    /* storage unavailable: nothing to remember */
-  }
+function RepoCards({ rows, open, shared }: { rows: RepoRow[]; open: (n: string) => void; shared?: boolean }) {
+  return (
+    <div className="cards">
+      {rows.map((r) => (
+        <button key={r.name} className="card repo" onClick={() => open(r.name)}>
+          <strong>{r.name}</strong>
+          {shared && <span className="pill">{r.role}</span>}
+          {r.description && <div className="muted small">{r.description}</div>}
+          <div className="muted small">
+            {shared ? `Owner: ${r.owner}` : "You own this"}
+            {r.updated_at && ` · updated ${when(r.updated_at)}`}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function OpenRepo({ open }: { open: (name: string) => void }) {
   const [name, setName] = useState("");
-  const recent = recentRepos();
+  const [data, error, reload] = useLoad<{ repos: RepoRow[] }>(() => api("/repos"), []);
+  const [filter, setFilter] = useState("");
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (name.trim()) open(name.trim());
   };
+  const match = (r: RepoRow) => r.name.toLowerCase().includes(filter.trim().toLowerCase());
+  const owned = (data?.repos ?? []).filter((r) => r.role === "owner" && match(r));
+  const shared = (data?.repos ?? []).filter((r) => r.role !== "owner" && match(r));
+  const total = data?.repos.length ?? 0;
   return (
     <section>
-      <h1>Open a repository</h1>
-      <p className="muted">Enter the name of a repository you own or that was shared with you.</p>
+      <h1>Your repositories</h1>
+      {error && <div className="error">{error} <button className="link" onClick={reload}>Retry</button></div>}
+      {!data && !error && <div className="empty">Loading…</div>}
+      {data && total === 0 && (
+        <div className="empty">
+          No repositories yet. Create one from a chat (“create a ctx repo called my-project”)
+          or with <code>ctx init my-project</code>.
+        </div>
+      )}
+      {total > 6 && (
+        <input className="filter" value={filter} onChange={(e) => setFilter(e.target.value)}
+               placeholder="Filter by name" aria-label="Filter repositories" />
+      )}
+      {owned.length > 0 && <><h3>Owned by you ({owned.length})</h3><RepoCards rows={owned} open={open} /></>}
+      {shared.length > 0 && <><h3>Shared with you ({shared.length})</h3><RepoCards rows={shared} open={open} shared /></>}
+      {data && total > 0 && owned.length + shared.length === 0 && (
+        <div className="empty">No repository matches “{filter}”.</div>
+      )}
+      <h3>Open by name</h3>
       <form className="share" onSubmit={submit}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project"
-               aria-label="Repository name" autoFocus />
+               aria-label="Repository name" />
         <button type="submit" className="primary">Open</button>
       </form>
-      {recent.length > 0 && (
-        <>
-          <h3>Recently opened</h3>
-          <div className="cards">
-            {recent.map((r) => (
-              <button key={r} className="card repo" onClick={() => open(r)}>
-                <strong>{r}</strong>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-      <p className="muted small">
-        Create a repository from a chat (“create a ctx repo called my-project”) or with
-        <code> ctx init my-project</code>.
-      </p>
     </section>
   );
 }
@@ -142,7 +158,6 @@ type Tab = "history" | "state" | "merges" | "members";
 function RepoView({ repo }: { repo: string }) {
   const [tab, setTab] = useState<Tab>("history");
   const [info, error] = useLoad<any>(() => api(`/repos/${encodeURIComponent(repo)}`), [repo]);
-  useEffect(() => { if (info) rememberRepo(info.name); }, [info]);
   if (error) return <div className="error">{error}</div>;
   if (!info) return <div className="empty">Loading…</div>;
   return (

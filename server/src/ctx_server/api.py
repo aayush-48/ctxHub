@@ -76,6 +76,12 @@ async def me(actor: Light) -> dict[str, Any]:
     return await service.get_user(actor.id)
 
 
+@router.get("/repos")
+async def my_repos(actor: Light) -> dict[str, Any]:
+    """Repositories you own or that were shared with you (never anyone else's)."""
+    return {"repos": await service.list_my_repos(actor)}
+
+
 @router.post("/repos", status_code=201)
 async def create_repo(actor: Light, body: RepoCreateIn) -> dict[str, Any]:
     return await service.create_repo(actor, body)

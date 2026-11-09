@@ -11,7 +11,7 @@ open, and the places where the implementation differs, with the reason for each.
 | Arbiter | **No LLM on the server.** The user's own chat model extracts items and marks replacements; the server judges relations with rules, embeddings and a local NLI model, and flags what it is unsure about. See below. |
 | Embedding model | Vertex `gemini-embedding-001` at 768 dimensions. The schema fixes 768, and local `bge-base-en-v1.5` (also 768) works for offline or sensitive use |
 | Additive auto-commit | On by default; per repo (`ctx settings --no-auto-commit`) and per call (`auto_confirm`) |
-| Web viewer | Built: commit graph, diffs with the pipeline audit, state per branch, pending merges, sharing. Repos are opened by name. Merge resolution stays in chat and the CLI |
+| Web viewer | Built: commit graph, diffs with the pipeline audit, state per branch, pending merges, sharing. The home page lists the repos you own and those shared with you. Merge resolution stays in chat and the CLI |
 
 ## No language model on the server
 
@@ -24,7 +24,7 @@ embeddings:
 |---|---|
 | Extracting items | The user's chat model, guided by the `ctx_commit` tool description. Exports and documents are attached in the chat and committed the same way; there is no server-side import. |
 | Marking changes of mind | The chat model sets `replaces` to a stored item's id (shown as `[id:…]` in pulls) and uses `updates` for answered questions and finished tasks. Explicit references always win. |
-| Which items are compared | Only items answering the same question: identical normalized subjects, or subject embeddings (stored in `state_items.subject_embedding`, migration 0003, backfilled lazily) at cosine ≥ `same_subject_threshold` (0.85). Items with different subjects are never flagged; only near-identical content (≥ 0.95, no differing numbers or negation) counts as a duplicate across subjects. Goals, constraints, decisions and facts are compared with each other; tasks only with tasks; open questions only with open questions (plus the answered-question check). Items inside one commit are compared with each other as well: duplicates are dropped, refinements replace the shorter item, and conflicts are flagged because order inside a commit is not chronology. |
+| Which items are compared | Only items answering the same question: identical normalized subjects, or subject embeddings (stored in `state_items.subject_embedding`, migration 0003, backfilled lazily) at cosine ≥ `same_subject_threshold` (0.93; measured rewordings of one question score 0.93–0.99, different questions in one project up to 0.92). The NLI model is never used to decide whether two items are about the same thing: on unrelated statements it reports "contradiction" with near-certainty. Items with different subjects are never flagged; only near-identical content (≥ 0.95, no differing numbers or negation) counts as a duplicate across subjects. Goals, constraints, decisions and facts are compared with each other; tasks only with tasks; open questions only with open questions (plus the answered-question check). Items inside one commit are compared with each other as well: duplicates are dropped, refinements replace the shorter item, and conflicts are flagged because order inside a commit is not chronology. |
 | Item size | `ItemIn` rejects subjects over 60 characters and content over 300 characters with a message telling the chat model to split the item. One fact per item keeps rules and NLI reliable. |
 | Notes about the chat | Content like "Provided a glossary" or "User may want a deeper explanation" is flagged with relation `chat_meta` and default choice "drop", not rejected. |
 | Duplicates, refinements, contradictions | Rules in `core/relations.py`: identical text, one statement extending the other, wording that marks a temporary situation, changed numbers or negation, embedding similarity, single-valued decisions on the same subject, and a local NLI cross-encoder run in both directions, only for same-question pairs where both texts are at most 40 words (int8 ONNX build of `cross-encoder/nli-deberta-v3-small`, baked into the image). Verdicts below `CTX_MIN_CONFIDENCE` are flagged for the user. |
@@ -43,8 +43,10 @@ the earlier server-side LLM.
 - **Repo names are globally unique** (case-insensitive), so a repo is addressed by its name
   alone and there is no `owner/name` form. Creating a taken name says so, which reveals that
   the name exists; membership and contents stay private.
-- **No repository listing.** People open repos by name (the web viewer remembers recently
-  opened ones in the browser).
+- **Only your own repositories are listed.** There is no global listing. The web viewer's home
+  page lists the repos you own and those shared with you (`GET /api/v1/repos`, read from your
+  own memberships only), and any repo can still be opened by name. The CLI and the MCP tools
+  open repos by name.
 - **Supersession links live on `commit_items`, not `state_items`.** An item can be superseded
   on one branch and still active on another, so the link belongs to a snapshot.
   `state_items` stays immutable, apart from provenance (sources a duplicate was folded into) and

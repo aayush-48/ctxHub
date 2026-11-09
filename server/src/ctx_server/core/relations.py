@@ -116,7 +116,10 @@ def decide(
             )
         return Relation(label="unrelated", confidence=0.9, reason="different subjects")
 
-    on = f"same subject '{b.subject}'"
+    if a.subject.strip().casefold() == b.subject.strip().casefold():
+        on = f"same subject '{b.subject}'"
+    else:
+        on = f"similar subjects '{a.subject}' and '{b.subject}'"
     negation_flip = bool(_NEGATION.search(a.content)) != bool(_NEGATION.search(b.content))
     if (ka in kb or kb in ka) and not negation_flip:
         # One statement is the other plus detail ("Ship an MVP" -> "Ship an MVP this sprint").

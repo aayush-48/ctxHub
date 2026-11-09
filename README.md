@@ -62,9 +62,12 @@ CLI), and from a web viewer.
   Duplicates are folded together. Contradictions become conflicts that you resolve as ours,
   theirs, both, or an edited item. Timestamps never settle disagreements between branches,
   because a later commit on another branch is not a later decision on this one.
-- **Renders fit a token budget.** Constraints and goals go in first, then unresolved conflict
-  warnings, decisions, open questions, tasks and facts. Items are compressed before they are
-  dropped, and a manifest lists everything left out. Constraints are never dropped silently.
+- **Renders fit a token budget you choose.** Every pull reports three sizes: minimum
+  (constraints and pinned items), recommended (every item, shortened where possible) and full.
+  Without a budget, the recommended size is used. Items go in priority order (constraints and
+  goals, conflict warnings, decisions, open questions, tasks, facts); every item is shortened
+  before any is dropped, and a manifest lists everything left out. Constraints are never dropped
+  silently.
   Claude gets XML-style sections, GPT gets Markdown.
 
 A typical flow:
@@ -196,7 +199,8 @@ Then ask the model things like:
 | `ctx_commit`, `ctx_confirm` | Propose a commit, then write it after you agree |
 | `ctx_branch`, `ctx_checkout` | Branch and move |
 | `ctx_merge` (start / complete / abort), `ctx_resolve` | Semantic merge and conflict resolution |
-| `ctx_pull` | Render state for a model within a token budget |
+| `ctx_pull` | Load the state into the chat. Without a size, the user picks one in the view first (minimum / recommended / full) and the model gets nothing until then; with `token_budget`, the context loads directly |
+| `ctx_stored` | One short line per stored item (id, type, subject), read before committing; no view |
 | `ctx_pin` | Pin an item so renders never drop it (no commit) |
 | `ctx_revert` | Undo a commit with a new commit |
 
@@ -212,7 +216,7 @@ In clients that support [MCP Apps](https://modelcontextprotocol.io/specification
 | History | `ctx_log` | Commit graph with branches and merges; click a commit for its diff and pipeline decisions |
 | Diff | `ctx_diff` | Changes between two refs; pick other refs to compare |
 | Conflict resolver | `ctx_merge`, `ctx_resolve` | Original, this branch and incoming side by side; keep either, both, or edit; complete or abort |
-| Pull and budget | `ctx_pull` | Budget slider, target model, pin/unpin items, see what is compressed or dropped, copy or use in this chat |
+| Pull and budget | `ctx_pull` | Slider from **Minimum** (constraints and pinned items) through **Recommended** (every item, shortened where possible) to **Full**; live preview of what is kept, shortened or dropped; pin/unpin; **Load into chat** sends the chosen size |
 
 Every button calls the same tools, so the model stays informed: the view also tells the model what
 you decided. Clients without MCP Apps get the same results as text.
@@ -254,7 +258,10 @@ Every command accepts `--json`. Refs work like git: branch names, commit-id pref
 
 ## Web viewer
 
-Open the service URL and sign in. Each repository has four tabs:
+Open the service URL and sign in. The home page lists **your repositories** (owned by you) and
+**repositories shared with you** (with your role, viewer or editor, and the owner), most
+recently updated first. Nobody sees repositories they have no access to. Each repository has
+four tabs:
 
 - **History:** the commit graph with branches and merges. Click a commit to see its diff and
   the pipeline's decisions.
@@ -342,13 +349,13 @@ uv run python -m evals.run --real --suites all      # real models, incl. handoff
 | merge | conflict precision/recall, auto-merge correctness | naive "latest wins" |
 | handoff | probe-question accuracy after commit in model A and pull in model B; accuracy per 1k tokens | truncated raw transcript, model self-summary |
 
-Results with real embeddings and the local NLI model (30 cases per suite; no server-side LLM):
+Results with real embeddings and the local NLI model (`gemini-embedding-001`, 30 cases per suite; no server-side LLM):
 
 | | Result | Baseline |
 |---|---|---|
 | Pipeline state accuracy | 0.90; the rest are flagged for the user rather than guessed | |
 | Duplicate detection | precision 1.00, recall 0.84 | |
-| Unnecessary flags on multi-subject commits | 0 of 300 entries | |
+| Unnecessary flags on multi-subject commits (incl. a real 16-item project commit with closely related subjects) | 0 of 332 entries | 9 with the earlier subject threshold of 0.85 |
 | Conflicts inside one commit flagged | 1.00 | |
 | Merge conflicts found | precision 0.92, recall 1.00 | latest-wins: 0, every conflict silently overwritten |
 | Auto-merge correctness | 0.99 | |

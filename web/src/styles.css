@@ -98,3 +98,7 @@ select, input { font: inherit; color: var(--fg); background: var(--card); border
 .share { display: flex; gap: 8px; flex-wrap: wrap; }
 .share input { flex: 1; min-width: 200px; }
 @media (max-width: 600px) { .tag, .who { display: none; } main { padding: 16px; } }
+
+.filter { width: 100%; max-width: 360px; margin: 8px 0 4px; }
+.card.repo { font: inherit; color: inherit; }
+.card.repo .pill { align-self: flex-start; margin-left: 0; }

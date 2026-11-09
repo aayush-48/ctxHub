@@ -57,7 +57,10 @@ class Settings(BaseSettings):
     min_confidence: float = 0.7
     # Two items answer the same question when their subjects match after normalizing, or when
     # the subjects alone (embedded separately) are at least this similar.
-    same_subject_threshold: float = 0.85
+    # Cosine of subject embeddings (gemini-embedding-001) above which two subjects name the same
+    # question. Measured: rewordings ("Auth provider"/"Authentication provider") 0.93-0.99;
+    # different questions in one project ("Detection model"/"Detection head") up to 0.92.
+    same_subject_threshold: float = 0.93
     # The NLI model is only trusted on short statements; longer items skip it.
     nli_max_words: int = 40
     max_items_per_commit: int = 50

@@ -142,7 +142,8 @@ class MemberIn(_Strict):
 class PullIn(_Strict):
     ref: str | None = None
     model: str = Field(default="claude", max_length=100)
-    budget: int = Field(default=4000, ge=200, le=200_000)
+    # None: the recommended size (every item, shortened where possible, nothing dropped).
+    budget: int | None = Field(default=None, ge=50, le=200_000)
     template: Literal["auto", "claude", "gpt", "plain"] = "auto"
     allow_drop_constraints: bool = False
 

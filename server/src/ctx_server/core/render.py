@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,7 +129,7 @@ async def render(
     repo: str,
     branch: str | None,
     model: str,
-    budget: int,
+    budget: int | None,
     template: str = "auto",
     allow_drop_constraints: bool = False,
     conflicts: list[str] | None = None,
@@ -172,35 +173,65 @@ async def render(
         )
 
     header_cost = counter.estimate(build([], []), family)
-    limit = int(budget * (1 - settings.render_safety_margin))
-    remaining = limit - header_cost
+    margin = 1 - settings.render_safety_margin
+
+    def cost(text: str) -> int:
+        return counter.estimate(esc(text), family) + 4
+
+    full_costs = [cost(ln.full) for ln in lines]
+    min_costs = [cost(ln.short) if ln.short else c for ln, c in zip(lines, full_costs, strict=True)]
+
+    def budget_for(total: int) -> int:
+        # The smallest budget whose packing limit fits `total` item tokens after the header.
+        return math.ceil((header_cost + total) / margin) + 1
+
+    sizes = {
+        # Constraints and pinned items, shortened: below this a render would lose them.
+        "minimum": budget_for(
+            sum(c for ln, c in zip(lines, min_costs, strict=True) if ln.protected)
+        ),
+        # Every item, shortened where it has a short form: nothing is dropped.
+        "recommended": budget_for(sum(min_costs)),
+        # Every item in full: a larger budget adds nothing.
+        "full": budget_for(sum(full_costs)),
+    }
+    if budget is None:
+        budget = sizes["recommended"]
+
+    # Pass 1, in priority order: give every item its shortest form while it fits, so items are
+    # shortened before anything is dropped. Pass 2: spend what is left on full forms, again in
+    # priority order.
+    remaining = int(budget * margin) - header_cost
     selected: list[_Line] = []
     dropped: list[_Line] = []
     protected_needed = 0
-    for ln in lines:
-        full_cost = counter.estimate(esc(ln.full), family) + 4
-        if full_cost <= remaining:
-            ln.form = "full"
+    for ln, c in zip(lines, min_costs, strict=True):
+        if c <= remaining:
+            ln.form = "compressed" if ln.short else "full"
             selected.append(ln)
-            remaining -= full_cost
-            continue
-        if ln.short:
-            short_cost = counter.estimate(esc(ln.short), family) + 4
-            if short_cost <= remaining:
-                ln.form = "compressed"
-                selected.append(ln)
-                remaining -= short_cost
-                continue
-        if ln.protected and not allow_drop_constraints:
-            protected_needed += counter.estimate(esc(ln.short or ln.full), family) + 4
-            continue
-        dropped.append(ln)
+            remaining -= c
+        elif ln.protected and not allow_drop_constraints:
+            protected_needed += c
+        else:
+            dropped.append(ln)
+    for ln in selected:
+        if ln.form == "compressed":
+            extra = cost(ln.full) - cost(ln.short or ln.full)
+            if extra <= remaining:
+                ln.form = "full"
+                remaining -= extra
+    # Keep render order stable for the template (priority order).
+    selected.sort(key=lambda ln: (TIER[ln.kind], -ln.importance))
 
     if protected_needed:
         raise ValidationFailed(
             "token budget too small to keep every constraint and pinned item; raise the budget, "
             "unpin items, or pass allow_drop_constraints",
-            {"budget": budget, "additional_tokens_needed": protected_needed - remaining},
+            {
+                "budget": budget,
+                "minimum_budget": sizes["minimum"],
+                "additional_tokens_needed": protected_needed - remaining,
+            },
         )
 
     # Verify with the target tokenizer and trim if the estimate was optimistic.
@@ -248,6 +279,7 @@ async def render(
         "token_count_exact": exact,
         "tokens": tokens,
         "budget": budget,
+        "sizes": sizes,
         "included": len(selected),
         "compressed": [ref(ln) for ln in selected if ln.form == "compressed"],
         "dropped": [ref(ln) for ln in dropped],

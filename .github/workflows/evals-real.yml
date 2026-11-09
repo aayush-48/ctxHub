@@ -41,6 +41,7 @@ jobs:
       - run: >
           uv run python -m evals.run --real --suites all --n ${{ inputs.cases }}
           --budgets ${{ inputs.budgets }} --handoff-cases ${{ inputs.handoff_cases }} --out evals/results/real.json
+          --fail-under noise.clean_commit_precision=0.99
       - uses: actions/upload-artifact@v4
         with:
           name: eval-results-real
