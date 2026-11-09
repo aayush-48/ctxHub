@@ -25,7 +25,7 @@ from .core.merge import (
 )
 from .core.pipeline import apply_proposal, find_item, public_entries, run_pipeline
 from .core.render import render
-from .core.snapshot import Snapshot, load_snapshot
+from .core.snapshot import Snapshot, ensure_subject_embeddings, load_snapshot
 from .core.text import heuristic_compress, normalize_subject, normalize_text
 from .db import session_scope
 from .errors import Conflict, Forbidden, NotFound, ValidationFailed
@@ -537,6 +537,7 @@ async def commit(actor: Actor, body: CommitIn) -> dict[str, Any]:
         branch = await _write_branch(s, actor, rc, body.branch)
         base_id = await _branch_head(s, rc.id, branch)
         base = await load_snapshot(s, base_id)
+        await ensure_subject_embeddings(s, rt.embedder, [base])
     provenance = {"client": body.source_client, "model": body.source_model, "author": str(actor.id)}
     with span(
         "ctx.pipeline",
@@ -1023,6 +1024,7 @@ async def merge(
         base = await load_snapshot(s, base_id)
         ours = await load_snapshot(s, ours_head)
         theirs = await load_snapshot(s, theirs_head)
+        await ensure_subject_embeddings(s, rt.embedder, [ours, theirs])
 
     with span("ctx.merge_plan", repo=str(rc.id), source=source, into=ours_branch):
         plan = await plan_merge(
@@ -1374,6 +1376,9 @@ async def _apply_resolution(
                     compressed=t.compressed,
                     attributes=t.attributes,
                     embedding=t.embedding.tolist() if t.embedding is not None else None,
+                    subject_embedding=(
+                        t.subject_embedding.tolist() if t.subject_embedding is not None else None
+                    ),
                     importance=t.importance,
                     llm_score=t.llm_score,
                     pinned=t.pinned,
@@ -1429,7 +1434,7 @@ async def _insert_edited(
 
     subject = normalize_text(edited["subject"])
     content = normalize_text(edited["content"])
-    [emb] = await rt.embedder.embed([f"{subject}\n{content}"])
+    emb, subject_emb = await rt.embedder.embed([f"{subject}\n{content}", subject])
     item = NewItem(
         type=edited["type"],
         subject=subject,
@@ -1438,6 +1443,7 @@ async def _insert_edited(
         reason=edited.get("reason"),
         compressed=heuristic_compress(edited["type"], content, edited.get("reason")),
         embedding=emb,
+        subject_embedding=subject_emb,
         importance=importance(rt.settings, edited["type"]),
         provenance={"client": "merge_resolution"},
         item_key=item_key,

@@ -332,20 +332,36 @@ basic-host (see the README's Development section):
 
 ---
 
+## 3b. Comparison scope and item size
+
+- [ ] **3b.1 Many different facts, no flags.** In Claude, describe a project with 8–10
+  different facts (model, sensors, cost, privacy…) and ask it to commit to a fresh repo.
+  *Expect:* every entry is **add**; nothing is flagged because no two items share a subject.
+- [ ] **3b.2 Notes about the chat.** If Claude records something like "Provided a glossary",
+  *Expect:* a **flag** tagged "note about the chat", preset to "Don't add".
+- [ ] **3b.3 Conflict inside one commit.** Commit
+  `[{"type":"decision","subject":"Primary datastore","content":"Use Postgres."},
+  {"type":"decision","subject":"Primary datastore","content":"Use MongoDB."}]` with `--no-auto`.
+  *Expect:* the second entry is a **flag** against `e1`.
+- [ ] **3b.4 Long items are refused.** Commit an item whose content is over 300 characters, or
+  whose subject is over 60.
+  *Expect:* `validation_failed` asking to split it into separate items / keep the subject to
+  2–5 words.
+
 ## Benchmarks
 
 The benchmarks run locally with Docker running (they start a throwaway Postgres). The real-model
 suites call Vertex AI and use a little trial credit.
 
 ```powershell
-# Offline (rule-based stand-in, free, deterministic): pipeline and merge logic
+# Offline (rule-based stand-in, free, deterministic): pipeline, noise and merge logic
 uv run python -m evals.run
 
 # Real models: set these once per terminal
 $env:GOOGLE_CLOUD_QUOTA_PROJECT="<project-id>"; $env:CTX_GCP_PROJECT="<project-id>"
 $env:CTX_EMBEDDING_PROVIDER="vertex"; $env:CTX_NLI_ENABLED="true"
 
-uv run python -m evals.run --real --suites pipeline,merge --n 40
+uv run python -m evals.run --real --suites pipeline,noise,merge --n 40
 uv run python -m evals.run --real --suites handoff --handoff-cases 6 --budgets 400,800,1600
 ```
 
@@ -360,6 +376,7 @@ Results are written to `evals/results/*.json`; the handoff suite also prints a t
 | Does the budget get used sensibly? | handoff: `budget_utilisation` | ≤ 1.0 always; well below 1.0 when the state is small |
 | Does the pipeline keep the right state? | pipeline: `state_accuracy`, `false_supersession_rate` | High accuracy, near-zero false supersession |
 | Are duplicates caught without losing distinct items? | pipeline: `dedupe_precision`, `dedupe_recall` | Both high; real embeddings plus NLI should beat the offline stand-in on paraphrases |
+| Does ctx avoid pointless review flags? | noise: `unnecessary_flag_rate`, `same_commit_conflict_recall` | 0 flags on multi-subject commits; every in-commit conflict flagged |
 | Are cross-branch conflicts caught? | merge: `conflict_precision`, `conflict_recall` vs latest-wins | High recall; latest-wins catches none |
 | Are compatible changes merged correctly? | merge: `auto_merge_correctness` | Near 1.0 |
 | How fast is it? | `latency_ms` for commit and pull | Pull well under a second; commit around a second |

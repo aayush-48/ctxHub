@@ -55,9 +55,14 @@ class Settings(BaseSettings):
     dedupe_threshold: float = 0.95
     related_threshold: float = 0.75
     min_confidence: float = 0.7
+    # Two items answer the same question when their subjects match after normalizing, or when
+    # the subjects alone (embedded separately) are at least this similar.
+    same_subject_threshold: float = 0.85
+    # The NLI model is only trusted on short statements; longer items skip it.
+    nli_max_words: int = 40
     max_items_per_commit: int = 50
-    max_subject_chars: int = 200
-    max_content_chars: int = 4000
+    max_subject_chars: int = 60
+    max_content_chars: int = 300  # about two sentences: one fact per item
     proposal_ttl_s: int = 24 * 3600
 
     # Importance weights: typeWeight, recency, useCount.

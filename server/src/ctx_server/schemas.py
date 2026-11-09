@@ -23,13 +23,11 @@ class ItemIn(_Strict):
     type: ItemType
     subject: str = Field(
         min_length=1,
-        max_length=_S.max_subject_chars,
-        description="The question this item answers, in a few words (e.g. 'Primary datastore').",
+        description="The question this item answers, in 2-5 words (e.g. 'Primary datastore').",
     )
     content: str = Field(
         min_length=1,
-        max_length=_S.max_content_chars,
-        description="One or two self-contained sentences.",
+        description="One fact, in one or two self-contained sentences.",
     )
     reason: str | None = Field(default=None, max_length=500, description="Why, for decisions.")
     pinned: bool = Field(default=False, description="Never drop this item from renders.")
@@ -38,6 +36,26 @@ class ItemIn(_Strict):
         description="item_key (or unique prefix) of an active item this explicitly replaces.",
     )
     attributes: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("subject")
+    @classmethod
+    def _short_subject(cls, v: str) -> str:
+        if len(v) > _S.max_subject_chars:
+            raise ValueError(
+                f"subject is {len(v)} characters; keep it to {_S.max_subject_chars}: name the "
+                "question in 2-5 words (e.g. 'Detection model')"
+            )
+        return v
+
+    @field_validator("content")
+    @classmethod
+    def _one_fact(cls, v: str) -> str:
+        if len(v) > _S.max_content_chars:
+            raise ValueError(
+                f"content is {len(v)} characters (max {_S.max_content_chars}): an item holds one "
+                "fact. Split it into separate items, each with its own specific subject"
+            )
+        return v
 
     @field_validator("attributes")
     @classmethod

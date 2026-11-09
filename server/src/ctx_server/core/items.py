@@ -58,6 +58,7 @@ class NewItem:
     compressed: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] | None = None
+    subject_embedding: list[float] | None = None
     importance: float = 0.5
     llm_score: float | None = None
     pinned: bool = False
@@ -104,9 +105,10 @@ async def insert_item(
     await session.execute(
         text(
             "INSERT INTO state_items (id, repo_id, item_key, type, subject, subject_norm, "
-            "content, compressed, attributes, embedding, importance, llm_score, pinned, "
+            "content, compressed, attributes, embedding, subject_embedding, importance, llm_score, "
+            "pinned, "
             "created_in, provenance) VALUES (:id, :r, :k, :t, :s, :sn, :c, :cmp, "
-            "CAST(:attr AS jsonb), CAST(:emb AS vector), :imp, :llm, :pin, :cin, "
+            "CAST(:attr AS jsonb), CAST(:emb AS vector), CAST(:semb AS vector), :imp, :llm, :pin, :cin, "
             "CAST(:prov AS jsonb))"
         ),
         {
@@ -120,6 +122,7 @@ async def insert_item(
             "cmp": item.compressed,
             "attr": json.dumps(attributes),
             "emb": _vec_literal(item.embedding),
+            "semb": _vec_literal(item.subject_embedding),
             "imp": item.importance,
             "llm": item.llm_score,
             "pin": item.pinned,

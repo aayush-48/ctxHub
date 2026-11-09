@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from .pipeline import PipelineDeps, same_group
+from .pipeline import PipelineDeps, same_group, same_question
 from .relations import ItemView, Pair, classify_pairs
 from .snapshot import SnapItem, Snapshot, cosine
 from .text import content_key
@@ -179,6 +179,7 @@ async def plan_merge(
     added_o = [i for i in ours.active() if i.item_key not in kb and i.id not in in_conflict]
     added_t = [i for i in theirs.active() if i.item_key not in kb and i.id not in in_conflict]
     pairs: list[tuple[SnapItem, SnapItem, float]] = []
+    same_q: dict[tuple[uuid.UUID, uuid.UUID], bool] = {}
     forced_set = set(forced)
     for a in added_o:
         for b_ in added_t:
@@ -188,9 +189,14 @@ async def plan_merge(
             if not same_group(a.type, b_.type) and not is_forced:
                 continue
             sim = cosine(a.embedding, b_.embedding)
-            if is_forced or a.subject_norm == b_.subject_norm or sim >= s.related_threshold:
+            # Both branches replaced the same item, or the two items answer the same question.
+            same = is_forced or same_question(
+                s, a.subject_norm, a.subject_embedding, b_.subject_norm, b_.subject_embedding
+            )
+            if same or sim >= s.dedupe_threshold:
                 pairs.append((a, b_, sim))
-    pairs.sort(key=lambda p: (p[0].subject_norm == p[1].subject_norm, p[2]), reverse=True)
+                same_q[(a.id, b_.id)] = same
+    pairs.sort(key=lambda p: (same_q[(p[0].id, p[1].id)], p[2]), reverse=True)
 
     exact_idx = {
         n for n, (a, b_, _) in enumerate(pairs) if content_key(a.content) == content_key(b_.content)
@@ -199,10 +205,7 @@ async def plan_merge(
     to_classify = [p for n, p in enumerate(pairs) if n not in exact_idx]
     # "existing" is ours and "new" is theirs in each pair.
     labels = await classify_pairs(
-        [
-            Pair(_view(a), _view(b_), sim, a.subject_norm == b_.subject_norm)
-            for a, b_, sim in to_classify
-        ],
+        [Pair(_view(a), _view(b_), sim, same_q[(a.id, b_.id)]) for a, b_, sim in to_classify],
         s,
         deps.nli,
     )

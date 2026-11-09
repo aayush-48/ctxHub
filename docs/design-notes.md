@@ -24,14 +24,18 @@ embeddings:
 |---|---|
 | Extracting items | The user's chat model, guided by the `ctx_commit` tool description. Exports and documents are attached in the chat and committed the same way; there is no server-side import. |
 | Marking changes of mind | The chat model sets `replaces` to a stored item's id (shown as `[id:…]` in pulls) and uses `updates` for answered questions and finished tasks. Explicit references always win. |
-| Duplicates, refinements, contradictions | Rules in `core/relations.py`: identical text, one statement extending the other, wording that marks a temporary situation, changed numbers or negation, embedding similarity, single-valued decisions on the same subject, and a local NLI cross-encoder run in both directions (int8 ONNX build of `cross-encoder/nli-deberta-v3-small`, baked into the image). Verdicts below `CTX_MIN_CONFIDENCE` are flagged for the user. |
+| Which items are compared | Only items answering the same question: identical normalized subjects, or subject embeddings (stored in `state_items.subject_embedding`, migration 0003, backfilled lazily) at cosine ≥ `same_subject_threshold` (0.85). Items with different subjects are never flagged; only near-identical content (≥ 0.95, no differing numbers or negation) counts as a duplicate across subjects. Goals, constraints, decisions and facts are compared with each other; tasks only with tasks; open questions only with open questions (plus the answered-question check). Items inside one commit are compared with each other as well: duplicates are dropped, refinements replace the shorter item, and conflicts are flagged because order inside a commit is not chronology. |
+| Item size | `ItemIn` rejects subjects over 60 characters and content over 300 characters with a message telling the chat model to split the item. One fact per item keeps rules and NLI reliable. |
+| Notes about the chat | Content like "Provided a glossary" or "User may want a deeper explanation" is flagged with relation `chat_meta` and default choice "drop", not rejected. |
+| Duplicates, refinements, contradictions | Rules in `core/relations.py`: identical text, one statement extending the other, wording that marks a temporary situation, changed numbers or negation, embedding similarity, single-valued decisions on the same subject, and a local NLI cross-encoder run in both directions, only for same-question pairs where both texts are at most 40 words (int8 ONNX build of `cross-encoder/nli-deberta-v3-small`, baked into the image). Verdicts below `CTX_MIN_CONFIDENCE` are flagged for the user. |
 | Open question answered | A decision or fact on the same subject resolves it; weaker matches are not applied. |
 | Importance | Type weight, recency and use count. |
 | Compressed form | Deterministic per type: decisions keep the choice and a short reason, facts one clause, constraints and open questions verbatim. |
 
 Measured with real embeddings and NLI (30 cases per suite): pipeline state accuracy 0.90 (the
-remaining cases are flagged, not guessed), duplicate precision 1.00 and recall 0.84, merge
-conflict recall 1.00 at precision 0.92, and a median commit time of 0.66 s, against 2–17 s with
+remaining cases are flagged, not guessed), duplicate precision 1.00 and recall 0.84, no
+unnecessary flags on commits of many different subjects, every in-commit conflict flagged,
+merge conflict recall 1.00 at precision 0.92, and a median commit time of 0.66 s, against 2–17 s with
 the earlier server-side LLM.
 
 ## Deviations

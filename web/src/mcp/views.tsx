@@ -126,7 +126,9 @@ function CommitReview({ app, data, onData }: Props) {
             <li key={e.id} className={accepted.has(e.id) ? "" : "off"}>
               <label className="row">
                 <input type="checkbox" checked={accepted.has(e.id)} onChange={() => toggle(e.id)} />
-                <span className={`tag a-${e.action}`}>{ACTION_TEXT[e.action] || e.action}</span>
+                <span className={`tag a-${e.action}`}>
+                  {e.relation === "chat_meta" ? "note about the chat" : ACTION_TEXT[e.action] || e.action}
+                </span>
                 {e.item?.type && <span className="muted">{label(e.item.type)}</span>}
               </label>
               <div className="content">{content}</div>
@@ -140,8 +142,14 @@ function CommitReview({ app, data, onData }: Props) {
               {e.action === "flag" && (
                 <select value={choices[e.id]} onChange={(ev) => setChoices({ ...choices, [e.id]: ev.target.value })}
                         aria-label="Choice for this entry">
-                  <option value="keep_both">Keep both</option>
-                  <option value="supersede">Replace the old item</option>
+                  {e.target ? (
+                    <>
+                      <option value="keep_both">Keep both</option>
+                      <option value="supersede">Replace the old item</option>
+                    </>
+                  ) : (
+                    <option value="keep_both">Keep it</option>
+                  )}
                   <option value="drop">Don't add</option>
                 </select>
               )}

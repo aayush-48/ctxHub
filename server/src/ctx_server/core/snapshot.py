@@ -32,6 +32,7 @@ class SnapItem:
     provenance: dict[str, Any]
     status: str = "active"
     superseded_by: uuid.UUID | None = None
+    subject_embedding: np.ndarray | None = None
 
     def view(self) -> dict[str, Any]:
         """Public JSON shape of an item."""
@@ -76,7 +77,7 @@ class Snapshot:
 _SNAPSHOT_SQL = text(
     """
     SELECT si.id, si.item_key, si.type, si.subject, si.subject_norm, si.content, si.compressed,
-           si.attributes, si.embedding, si.importance, si.llm_score, si.pinned, si.use_count,
+           si.attributes, si.embedding, si.subject_embedding, si.importance, si.llm_score, si.pinned, si.use_count,
            si.created_in, si.created_at, si.provenance, ci.status, ci.superseded_by
     FROM commit_items ci JOIN state_items si ON si.id = ci.item_id
     WHERE ci.commit_id = :cid
@@ -115,6 +116,7 @@ async def load_snapshot(session: AsyncSession, commit_id: uuid.UUID) -> Snapshot
             provenance=r["provenance"] or {},
             status=r["status"],
             superseded_by=r["superseded_by"],
+            subject_embedding=_vec(r["subject_embedding"]),
         )
     return snap
 
@@ -126,3 +128,31 @@ def cosine(a: np.ndarray | None, b: np.ndarray | None) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return float(np.dot(a, b) / (na * nb))
+
+
+async def ensure_subject_embeddings(session: AsyncSession, embedder, snaps) -> None:
+    """Embed the subjects of active items stored before subject embeddings existed, and save
+    them, so every comparison can tell whether two items answer the same question."""
+    missing: dict[uuid.UUID, list[SnapItem]] = {}
+    for snap in snaps:
+        for i in snap.items.values():
+            if i.status == "active" and i.subject_embedding is None:
+                missing.setdefault(i.id, []).append(i)
+    if not missing:
+        return
+    subjects = sorted({group[0].subject for group in missing.values()})
+    vectors = dict(zip(subjects, await embedder.embed(subjects), strict=True))
+    for group in missing.values():
+        for i in group:
+            i.subject_embedding = np.asarray(vectors[group[0].subject], dtype=np.float64)
+    ids = list(missing)
+    literals = [
+        "[" + ",".join(f"{x:.7g}" for x in vectors[missing[i][0].subject]) + "]" for i in ids
+    ]
+    await session.execute(
+        text(
+            "UPDATE state_items s SET subject_embedding = CAST(x.v AS vector) "
+            "FROM unnest(CAST(:ids AS uuid[]), CAST(:vs AS text[])) AS x(id, v) WHERE s.id = x.id"
+        ),
+        {"ids": ids, "vs": literals},
+    )

@@ -25,8 +25,10 @@ jobs:
         run: uv run pytest cli/tests -q
       - name: Evals (offline providers) with quality gates
         run: >
-          uv run python -m evals.run --suites pipeline,merge --n 40 --out evals/results/ci.json
+          uv run python -m evals.run --suites pipeline,noise,merge --n 40 --out evals/results/ci.json
           --fail-under pipeline.full.state_accuracy=0.85
+          --fail-under noise.clean_commit_precision=0.95
+          --fail-under noise.same_commit_conflict_recall=0.95
           --fail-under merge.conflict_recall=0.95
           --fail-under merge.auto_merge_correctness=0.9
       - uses: actions/upload-artifact@v4

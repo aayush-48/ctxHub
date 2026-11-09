@@ -6,6 +6,8 @@
 Suites
 - pipeline: state accuracy, superseded-fact leakage, false-supersession rate, dedupe P/R
             for the rule-based pipeline (with the local NLI model when CTX_NLI_ENABLED=1).
+- noise:    unnecessary-flag rate on commits of many different subjects (in one commit and
+            across commits) and recall on conflicting values inside one commit.
 - merge:    conflict detection precision/recall and auto-merge correctness, vs naive
             "latest wins".
 - handoff:  a stand-in for the user's chat model commits after each session and later answers
@@ -170,6 +172,58 @@ async def eval_merge(service, actor, cases: list[MergeCase]) -> dict[str, Any]:
     }
 
 
+# ----------------------------------------------------------------------------- noise
+
+
+async def eval_noise(service, actor, seed: int, n: int) -> dict[str, Any]:
+    """Flags the user should never see vs conflicts they must see.
+
+    - Clean commits: several different subjects in one commit, then a second commit of other
+      different subjects. Any flag or supersede is unnecessary noise.
+    - Same-commit conflicts: one subject with two different values in the same commit. These
+      must be flagged (order inside a commit is not chronology).
+    """
+    from ctx_server.schemas import CommitIn
+
+    from .dataset import item
+
+    rng = random.Random(seed)
+    noisy = total = 0
+    caught = planted = 0
+    for _ in range(n):
+        repo = await _new_repo(service, actor)
+        subjects = rng.sample(SUBJECTS, k=min(10, len(SUBJECTS)))
+        first, second = subjects[:5], subjects[5:]
+        for group in (first, second):
+            items = [item(s, rng.randrange(len(s.values))) for s in group]
+            r = await _commit_all(service, actor, repo, items)
+            total += len(r["entries"])
+            noisy += sum(e["action"] in {"flag", "supersede"} for e in r["entries"])
+        s = rng.choice([x for x in SUBJECTS if len(x.values) > 1])
+        a, b = rng.sample(range(len(s.values)), 2)
+        r = await _timed(
+            "commit",
+            service.commit(
+                actor,
+                CommitIn(
+                    repo=await _new_repo(service, actor),
+                    message="eval",
+                    items=[item(s, a), item(s, b)],
+                    auto_confirm=False,
+                ),
+            ),
+        )
+        planted += 1
+        caught += r["entries"][1]["action"] == "flag"
+    return {
+        "cases": n,
+        "clean_entries": total,
+        "unnecessary_flag_rate": round(noisy / total, 4) if total else None,
+        "clean_commit_precision": round(1 - noisy / total, 4) if total else None,
+        "same_commit_conflict_recall": round(caught / planted, 4) if planted else None,
+    }
+
+
 # ----------------------------------------------------------------------------- handoff
 
 
@@ -331,7 +385,9 @@ async def _main(args: argparse.Namespace) -> dict[str, Any]:
     uid = await service.upsert_user(f"eval:{uuid.uuid4().hex}", "eval@example.com", "eval")
     actor = service.Actor(id=uid)
     suites = (
-        set(args.suites.split(",")) if args.suites != "all" else {"pipeline", "merge", "handoff"}
+        set(args.suites.split(","))
+        if args.suites != "all"
+        else {"pipeline", "noise", "merge", "handoff"}
     )
     results: dict[str, Any] = {
         "providers": {"embeddings": rt.embedder.name, "nli": rt.nli is not None},
@@ -342,6 +398,8 @@ async def _main(args: argparse.Namespace) -> dict[str, Any]:
         results["pipeline"] = {
             "full": await eval_pipeline(service, actor, cases),
         }
+    if "noise" in suites:
+        results["noise"] = await eval_noise(service, actor, args.seed + 9, args.n)
     if "merge" in suites:
         results["merge"] = await eval_merge(service, actor, merge_cases(args.seed + 4, args.n))
     if "handoff" in suites:
@@ -367,7 +425,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--suites", default="pipeline,merge")
+    ap.add_argument("--suites", default="pipeline,noise,merge")
     ap.add_argument("--real", action="store_true", help="Use configured Vertex/Gemini providers.")
     ap.add_argument("--n", type=int, default=40, help="Cases per suite.")
     ap.add_argument("--seed", type=int, default=7)

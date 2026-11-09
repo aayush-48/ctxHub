@@ -55,6 +55,26 @@ def same_group(a: str, b: str) -> bool:
     return TYPE_GROUP.get(a, a) == TYPE_GROUP.get(b, b)
 
 
+def same_question(settings: Settings, norm_a: str, emb_a: Any, norm_b: str, emb_b: Any) -> bool:
+    """Whether two items answer the same question: identical subjects after normalizing, or
+    subjects (embedded on their own) that are nearly the same ("Auth provider" and
+    "Authentication provider")."""
+    if norm_a == norm_b:
+        return True
+    return cosine(emb_a, emb_b) >= settings.same_subject_threshold
+
+
+# Notes about the conversation itself rather than the project: what the assistant explained,
+# what the user asked for. Chat models sometimes commit these despite the tool instructions.
+_CHAT_META = re.compile(
+    r"^\s*(provided|explained|answered|summari[sz]ed|described|listed|gave|shared|clarified|"
+    r"walked (the user )?through|helped the user)\b"
+    r"|\b(the )?user (wants|wanted|asked|asks|may want|might want|would like|is asking)\b"
+    r"|\bin (this|the) (chat|conversation)\b",
+    re.IGNORECASE,
+)
+
+
 @dataclass
 class PipelineDeps:
     settings: Settings
@@ -81,6 +101,7 @@ class _Cand:
     embedding: Any
     snap: SnapItem | None = None
     entry_id: str | None = None
+    subject_embedding: Any = None
 
     def target(self) -> dict[str, Any]:
         if self.snap is not None:
@@ -183,13 +204,17 @@ async def run_pipeline(
 
     # -- Embed
     if work:
-        vecs = await deps.embedder.embed([f"{w.item.subject}\n{w.item.content}" for w in work])
-        for w, v in zip(work, vecs, strict=True):
+        texts = [f"{w.item.subject}\n{w.item.content}" for w in work]
+        subjects = sorted({w.item.subject for w in work})
+        vecs = await deps.embedder.embed(texts + subjects)
+        by_subject = dict(zip(subjects, vecs[len(texts) :], strict=True))
+        for w, v in zip(work, vecs[: len(texts)], strict=True):
             w.item.embedding = v
+            w.item.subject_embedding = by_subject[w.item.subject]
         event("embed", "ok", count=len(work), provider=deps.embedder.name)
 
     active = snapshot.active()
-    pairs: list[tuple[_Work, _Cand, float]] = []
+    pairs: list[tuple[_Work, _Cand, float, bool]] = []
 
     # -- Dedupe (identical text) and candidate selection
     for idx, w in enumerate(work):
@@ -208,22 +233,49 @@ async def run_pipeline(
             event("supersede", "explicit", entry=w.eid, target=str(t.id))
             continue
 
+        if _CHAT_META.search(w.item.content):
+            w.entry = {
+                "action": "flag",
+                "relation": "chat_meta",
+                "default_choice": "drop",
+                "reason": "looks like a note about this conversation (what was explained or "
+                "asked), not project state; it is skipped unless you keep it",
+            }
+            event("validate", "chat_meta", entry=w.eid)
+            continue
+
         wv = np.asarray(w.item.embedding) if w.item.embedding is not None else None
+        sv = np.asarray(w.item.subject_embedding) if w.item.subject_embedding is not None else None
         pool: list[_Cand] = [
-            _Cand(_snap_view(a), a.subject_norm, a.embedding, snap=a)
+            _Cand(
+                _snap_view(a),
+                a.subject_norm,
+                a.embedding,
+                snap=a,
+                subject_embedding=a.subject_embedding,
+            )
             for a in active
             if same_group(a.type, w.item.type)
         ]
         pool += [
-            _Cand(_view(p.item), p.item.subject_norm, np.asarray(p.item.embedding), entry_id=p.eid)
+            _Cand(
+                _view(p.item),
+                p.item.subject_norm,
+                np.asarray(p.item.embedding),
+                entry_id=p.eid,
+                subject_embedding=np.asarray(p.item.subject_embedding),
+            )
             for p in work[:idx]
             if same_group(p.item.type, w.item.type)
             and not (p.entry and p.entry["action"] == "drop_duplicate")
+            and not (p.entry and p.entry.get("relation") == "chat_meta")
         ]
         scored = []
         for c in pool:
             sim = cosine(wv, c.embedding)
-            same_subject = c.subject_norm == w.item.subject_norm
+            same_subject = same_question(
+                s, c.subject_norm, c.subject_embedding, w.item.subject_norm, sv
+            )
             if content_key(c.view.content) == content_key(w.item.content):
                 w.entry = {
                     "action": "drop_duplicate",
@@ -235,23 +287,21 @@ async def run_pipeline(
                 }
                 event("dedupe", "exact_duplicate", entry=w.eid, target=c.target())
                 break
-            if same_subject or sim >= s.related_threshold:
+            # Compare only items that answer the same question, plus near-identical text.
+            if same_subject or sim >= s.dedupe_threshold:
                 scored.append((c, sim, same_subject))
         if w.entry is not None:
             continue
         scored.sort(key=lambda x: (x[2], x[1]), reverse=True)
-        pairs += [(w, c, sim) for c, sim, _same in scored[:3]]
+        pairs += [(w, c, sim, same) for c, sim, same in scored[:3]]
 
     # -- Classify relations: rules, embeddings and local NLI (no language model)
     relations = await classify_pairs(
-        [
-            Pair(c.view, _view(w.item), sim, c.subject_norm == w.item.subject_norm)
-            for w, c, sim in pairs
-        ],
+        [Pair(c.view, _view(w.item), sim, same) for w, c, sim, same in pairs],
         s,
         deps.nli,
     )
-    for (w, c, sim), r in zip(pairs, relations, strict=True):
+    for (w, c, sim, _same), r in zip(pairs, relations, strict=True):
         event(
             "classify",
             r.label,
@@ -269,9 +319,11 @@ async def run_pipeline(
     for w in work:
         if w.entry is not None:
             continue
-        mine = [(r, c, sim) for (ww, c, sim), r in zip(pairs, relations, strict=True) if ww is w]
+        mine = [
+            (r, c, sim) for (ww, c, sim, _same), r in zip(pairs, relations, strict=True) if ww is w
+        ]
         if not mine:
-            w.entry = {"action": "add", "reason": "no related active item"}
+            w.entry = {"action": "add", "reason": "no stored item answers the same question"}
             continue
         w.entry = _decide(w, mine, min_conf)
         event("supersede", w.entry["action"], entry=w.eid, relation=w.entry.get("relation"))
@@ -285,13 +337,13 @@ async def run_pipeline(
         if w.item.type not in ANSWER_TYPES or (w.entry and w.entry["action"] == "drop_duplicate"):
             continue
         wv = np.asarray(w.item.embedding)
+        sv = np.asarray(w.item.subject_embedding)
         for q in open_qs:
             if q.id in status_target_ids or q.id in claimed:
                 continue
             sim = cosine(wv, q.embedding)
-            conf = answers_question(
-                _snap_view(q), _view(w.item), sim, q.subject_norm == w.item.subject_norm
-            )
+            same = same_question(s, q.subject_norm, q.subject_embedding, w.item.subject_norm, sv)
+            conf = answers_question(_snap_view(q), _view(w.item), sim, same)
             if not conf:
                 continue
             event("classify", "answers", entry=w.eid, question=str(q.id), confidence=conf)
@@ -368,9 +420,14 @@ def _decide(w: _Work, rels: list[tuple[Relation, _Cand, float]], min_conf: float
     if r.label == "temporal_scope":
         return {**base, "action": "flag", "default_choice": "keep_both"}
     if c.snap is None:
-        # Two items of the same commit relate. Duplicates drop; anything else is the user's call.
+        # Two items of the same commit answer the same question. Their order in the commit is
+        # not the order things were said in the chat, so a conflicting pair is the user's call.
         if r.label == "duplicate":
             return {**base, "action": "drop_duplicate"}
+        if r.label == "refinement":
+            if r.refined == "existing":
+                return {**base, "action": "drop_duplicate"}
+            return {**base, "action": "supersede"}  # keep the more detailed one
         return {**base, "action": "flag", "default_choice": "keep_both"}
     if r.label == "duplicate":
         return {**base, "action": "drop_duplicate"}
@@ -479,7 +536,7 @@ async def apply_proposal(
         entry_items[e["id"]] = iid
         membership[iid] = ("active", None)
         counts["added"] += 1
-        if action in ("supersede", "refine") or choice == "supersede":
+        if (action in ("supersede", "refine") or choice == "supersede") and e.get("target"):
             supersede(e["target"], iid)
         applied.append(e["id"])
 

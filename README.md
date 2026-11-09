@@ -46,6 +46,16 @@ CLI), and from a web viewer.
   items, and the server checks them with embeddings, rules and a small local NLI model,
   flagging anything it is unsure about for you. The result is a *proposed diff*. Nothing is written until you confirm it, except
   diffs that only add items, which can commit automatically.
+- **Items are compared only when they answer the same question.** Each item has a short
+  subject (2–5 words, at most 60 characters) and one fact as content (at most 300 characters);
+  longer items are rejected with a message asking the chat model to split them. Two items are
+  checked for duplicates, refinements or contradictions only when their subjects match (same
+  text, or subject embeddings at cosine ≥ 0.85), so a commit of many different facts about one
+  project raises no flags. Items inside the same commit are compared too: a duplicate is
+  dropped, a more detailed version replaces the shorter one, and a real conflict is flagged
+  (order inside one commit says nothing about which came later). Items that describe the chat
+  itself ("Provided a glossary", "User may want…") are flagged as a note about the chat, preset
+  to "Don't add".
 - **History is never rewritten.** A replaced item is closed and linked to its replacement, and a
   revert is itself a new commit. Every pipeline decision is recorded in an audit log.
 - **Merges are three-way and semantic.** Changes made on only one side apply directly.
@@ -321,13 +331,14 @@ push.
 ## Evaluation
 
 ```bash
-uv run python -m evals.run                          # offline: pipeline + merge
+uv run python -m evals.run                          # offline: pipeline + noise + merge
 uv run python -m evals.run --real --suites all      # real models, incl. handoff fidelity
 ```
 
 | Suite | Measures | Compared against |
 |---|---|---|
 | pipeline | state accuracy, superseded-fact leakage, false-supersession rate, dedupe precision/recall | rules with and without the NLI model |
+| noise | unnecessary-flag rate on commits of many different subjects (one commit and across commits); recall on two conflicting values inside one commit | no flags at all; every in-commit conflict flagged |
 | merge | conflict precision/recall, auto-merge correctness | naive "latest wins" |
 | handoff | probe-question accuracy after commit in model A and pull in model B; accuracy per 1k tokens | truncated raw transcript, model self-summary |
 
@@ -337,8 +348,10 @@ Results with real embeddings and the local NLI model (30 cases per suite; no ser
 |---|---|---|
 | Pipeline state accuracy | 0.90; the rest are flagged for the user rather than guessed | |
 | Duplicate detection | precision 1.00, recall 0.84 | |
+| Unnecessary flags on multi-subject commits | 0 of 300 entries | |
+| Conflicts inside one commit flagged | 1.00 | |
 | Merge conflicts found | precision 0.92, recall 1.00 | latest-wins: 0, every conflict silently overwritten |
-| Auto-merge correctness | 0.96 | |
+| Auto-merge correctness | 0.99 | |
 | Commit latency | 0.66 s median | 2–17 s with a server-side LLM (earlier design) |
 
 The handoff suite still uses short synthetic conversations that fit in the budget whole, so

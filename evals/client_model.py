@@ -16,11 +16,14 @@ EXTRACT_PROMPT = """You are using the ctx tool to save the task state of this pr
 conversation. Extract typed items the way the ctx_commit tool asks:
 
 Types: goal, constraint, decision, open_question, fact, task.
-- subject: the question the item answers, in a few words (e.g. "Primary datastore").
-- content: one or two self-contained sentences.
+- One fact per item. content: one or two sentences, at most 300 characters. If a sentence
+  lists several things, make one item per thing.
+- subject: the question the item answers, in 2-5 words (e.g. "Primary datastore"), at most
+  60 characters. Each item gets its own specific subject, never a catch-all like "Overview".
 - reason: for decisions, the one-line reason if stated.
-Record only what the user stated, decided or agreed to; skip the assistant's general advice.
-Use the latest version of anything that changed.
+Record only what the user stated, decided or agreed to. Do not record the conversation itself
+(what the assistant explained, what the user asked) or the assistant's advice the user did not
+adopt. Use the latest version of anything that changed.
 
 Stored items are listed with their ids. Do not repeat an unchanged stored item. When the user
 changed their mind about a stored item, reuse its subject and type and set "replaces" to its
@@ -107,7 +110,9 @@ class ClientModel:
                 it = ExtractedItem.model_validate(raw)
             except ValidationError:
                 continue
-            item = {"type": it.type, "subject": it.subject[:200], "content": it.content[:4000]}
+            if len(it.subject) > 60 or len(it.content) > 300:
+                continue  # the server would reject it; a real client would split it
+            item = {"type": it.type, "subject": it.subject, "content": it.content}
             if it.reason:
                 item["reason"] = it.reason[:500]
             if it.replaces and re.fullmatch(r"[0-9a-fA-F-]{6,}", it.replaces):

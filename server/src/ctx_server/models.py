@@ -132,6 +132,7 @@ class StateItem(Base):
     compressed: Mapped[str | None] = mapped_column(Text)
     attributes: Mapped[dict[str, Any]] = mapped_column(default=dict)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    subject_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     importance: Mapped[float] = mapped_column(Float, default=0.5)
     llm_score: Mapped[float | None] = mapped_column(Float)
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)

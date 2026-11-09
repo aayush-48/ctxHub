@@ -180,7 +180,7 @@ async def test_render_respects_budget_and_reports_drops(alice, repo):
         repo,
         [item("constraint", "Hosting", "Must run on GCP.")]
         + [
-            item("fact", f"Fact {n}", f"Fact number {n} is a long detail about subsystem {n} " * 6)
+            item("fact", f"Fact {n}", f"Fact number {n} is a long detail about subsystem {n} " * 5)
             for n in range(30)
         ],
     )
@@ -199,7 +199,7 @@ async def test_constraints_never_dropped_silently(alice, repo):
     await commit(
         alice,
         repo,
-        [item("constraint", f"C{n}", f"Constraint number {n} " * 20) for n in range(10)],
+        [item("constraint", f"C{n}", f"Constraint number {n} " * 13) for n in range(10)],
     )
     with pytest.raises(ValidationFailed):
         await service.pull(alice, repo, PullIn(model="gpt-5", budget=200))
