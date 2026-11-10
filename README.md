@@ -340,6 +340,11 @@ push.
 
 ## Evaluation
 
+**Continuing a project across chats:** [docs/benchmark-handoff-chain.md](docs/benchmark-handoff-chain.md)
+covers a 5-chat planning project handed over by summary, by ctx and by full transcript. After
+four handoffs, the summary method answered 50% of questions correctly, ctx 88% and the full
+transcript 91%. ctx used 1.9× the summary's tokens and 30% fewer than the full transcript.
+
 ```bash
 uv run python -m evals.run                          # offline: pipeline + noise + merge
 uv run python -m evals.run --real --suites all      # real models, incl. handoff fidelity

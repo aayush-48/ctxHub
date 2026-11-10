@@ -195,6 +195,7 @@ async def test_full_flow_rest_and_mcp(client):
             "name": "ctx_commit",
             "arguments": {
                 "repo": "llm-context-vc",
+                "user_request": "Commit the decisions so far.",
                 "message": "Chose storage layer",
                 "items": [
                     {
@@ -214,6 +215,24 @@ async def test_full_flow_rest_and_mcp(client):
     )
     out = res["result"]["structuredContent"]
     assert out["committed"] is True
+
+    # A commit nobody asked for is refused before anything is written.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {
+            "name": "ctx_commit",
+            "arguments": {
+                "repo": "llm-context-vc",
+                "user_request": "Riya moves to the React dashboard.",
+                "message": "m",
+                "items": [{"type": "fact", "subject": "Riya", "content": "Riya builds the UI."}],
+            },
+        },
+    )
+    assert res["result"]["isError"] is True
+    assert "only for when the user asks to save" in res["result"]["content"][0]["text"]
     # Compact: one line per entry; the view fetches the full proposal itself.
     assert out["entries"] == ["e1 add · Primary datastore", "e2 add · ChatGPT write tools"]
     assert out["ui"] == {"tool": "ctx_app_proposal", "args": {"proposal_id": out["proposal_id"]}}
@@ -263,7 +282,10 @@ async def test_full_flow_rest_and_mcp(client):
         client,
         tok["access_token"],
         "tools/call",
-        {"name": "ctx_stored", "arguments": {"repo": "llm-context-vc"}},
+        {
+            "name": "ctx_stored",
+            "arguments": {"repo": "llm-context-vc", "user_request": "commit this"},
+        },
     )
     [line] = [c["text"] for c in res["result"]["content"] if c["type"] == "text"]
     assert "2 active items" in line and "decision | Primary datastore:" in line
@@ -272,9 +294,25 @@ async def test_full_flow_rest_and_mcp(client):
         client,
         tok["access_token"],
         "tools/call",
-        {"name": "ctx_stored", "arguments": {"repo": "llm-context-vc", "rules": False}},
+        {
+            "name": "ctx_stored",
+            "arguments": {"repo": "llm-context-vc", "user_request": "save it", "rules": False},
+        },
     )
-    assert "RULES" not in res["result"]["content"][0]["text"]
+    assert res["result"].get("isError") is not True
+    text = res["result"]["content"][0]["text"]
+    assert "2 active items" in text and "RULES" not in text
+    # Without a request to save, nothing is listed.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {
+            "name": "ctx_stored",
+            "arguments": {"repo": "llm-context-vc", "user_request": "Riya moves to React."},
+        },
+    )
+    assert res["result"]["isError"] is True
 
     # Rare operations share two tools; log is compact for the model.
     res = await mcp_call(

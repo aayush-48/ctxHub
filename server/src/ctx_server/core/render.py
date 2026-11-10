@@ -15,6 +15,7 @@ from ..errors import ValidationFailed
 from ..providers.tokenizers import TokenCounter, target_family
 from .items import importance
 from .snapshot import SnapItem, Snapshot
+from .text import truncate_words
 
 SECTIONS = [
     ("constraint", "constraints", "Constraints"),
@@ -102,13 +103,19 @@ def _item_lines(settings: Settings, snap: Snapshot, ids: bool = True) -> list[_L
         tag = f" [id:{i.item_key.hex[:8]}]" if ids else ""
         full = _flat(i.content)
         reason = i.attributes.get("reason")
-        if reason and i.type == "decision":
+        if reason:
             full += f" Reason: {_flat(reason)}"
+        short = _flat(i.compressed) if i.compressed and _flat(i.compressed) != full else None
+        if short and reason and i.type != "decision":  # decisions' short form has the reason
+            short += f" — {truncate_words(_flat(reason), 100)}"
         olds = replaced_by.get(i.id, [])
         if olds:
+            # What this replaced is part of the state (it answers "what did we have before?"),
+            # so it survives shortening, in a few words.
             old = olds[-1]
             full += f" (replaces: {_flat(old.compressed or old.content)})"
-        short = _flat(i.compressed) if i.compressed and _flat(i.compressed) != full else None
+            if short:
+                short += f" (was: {truncate_words(_flat(old.compressed or old.content), 60)})"
         lines.append(
             _Line(
                 kind=i.type,

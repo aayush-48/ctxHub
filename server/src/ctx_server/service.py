@@ -1144,12 +1144,12 @@ async def merge(
         "conflicts": conflicts,
         "review": plan.review,
         "next_step": (
-            "Show each conflict to the user and call ctx_resolve with their choice "
-            "(ours, theirs, both, or edited). The merge commit is written when the "
-            "last conflict is resolved."
+            "Show each conflict to the user and call ctx_manage with action 'resolve' "
+            "and their choice (ours, theirs, both, or edited). The merge commit is "
+            "written when the last conflict is resolved."
             if plan.conflicts
-            else "Review the changes, then complete the merge with ctx_merge "
-            "action='complete', or abort it."
+            else "Review the changes, then call ctx_manage with action 'merge_complete' "
+            "(or 'merge_abort')."
         ),
     }
 

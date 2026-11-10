@@ -81,3 +81,52 @@ async def test_previews_do_not_count_as_use(alice, repo):
     assert await uses() == start
     await service.pull(alice, repo, PullIn())  # a real load counts
     assert await uses() > start
+
+
+async def test_short_forms_keep_what_was_replaced_and_why(alice, repo):
+    await service.commit(
+        alice,
+        CommitIn(
+            repo=repo,
+            message="m",
+            items=[
+                item(
+                    "fact",
+                    "Database",
+                    "The project stores everything in Firebase "
+                    "Firestore, including bookings, doctors and clinic settings.",
+                )
+            ],
+        ),
+    )
+    r = await service.commit(
+        alice,
+        CommitIn(
+            repo=repo,
+            message="m",
+            items=[
+                item(
+                    "fact",
+                    "Database",
+                    "The project stores everything in Supabase "
+                    "Postgres in Mumbai, including bookings, doctors and clinic settings.",
+                    reason="Firestore costs were unpredictable",
+                )
+            ],
+        ),
+    )
+    assert [e["action"] for e in r["entries"]] in (["supersede"], ["flag"])
+    if r["entries"][0]["action"] == "flag":
+        import uuid as _uuid
+
+        from ctx_server.schemas import ConfirmIn
+
+        await service.confirm(
+            alice, _uuid.UUID(r["proposal_id"]), ConfirmIn(choices={"e1": "supersede"})
+        )
+    sizes = (await service.pull(alice, repo, PullIn()))["manifest"]["sizes"]
+    tight = await service.pull(alice, repo, PullIn(budget=sizes["recommended"]))
+    if tight["manifest"]["compressed"]:
+        assert "(was: " in tight["context"]
+    full = (await service.pull(alice, repo, PullIn(budget=sizes["full"])))["context"]
+    assert "Firestore" in full and "unpredictable" in full

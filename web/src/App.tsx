@@ -285,7 +285,7 @@ function State({ repo, branches }: { repo: string; branches: Branch[] }) {
   );
 }
 
-// Read-only: conflicts are resolved from a chat (ctx_resolve) or the CLI.
+// Read-only: conflicts are resolved from a chat (ctx_manage resolve) or the CLI.
 function Merges({ repo }: { repo: string }) {
   const [pending, error] = useLoad<any[]>(async () => {
     const list = await api<any[]>(`/repos/${repo}/merges?state=pending`);
@@ -295,7 +295,7 @@ function Merges({ repo }: { repo: string }) {
   if (!pending) return <div className="empty">Loading…</div>;
   if (!pending.length) {
     return <div className="empty">No pending merges. Resolve conflicts from a chat
-      (ctx_resolve) or with <code>ctx merge --continue</code>.</div>;
+      or with <code>ctx merge --continue</code>.</div>;
   }
   return (
     <div>
