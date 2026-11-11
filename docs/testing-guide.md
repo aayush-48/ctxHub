@@ -243,8 +243,8 @@ The server does not read conversations; your chat model does.
 - [ ] **9.1 Connect.** Claude: Settings → Connectors → Add custom connector → `$URL/mcp`.
 - [ ] **9.2 Tools list.** Ask "What ctx tools do you have?". *Expect:* six tools: `ctx_stored`, `ctx_commit`, `ctx_confirm`, `ctx_pull`, `ctx_inspect`, `ctx_manage` (no repo listing: you open repos by name).
 - [ ] **9.3 Commit from chat.** Discuss a plan, then "Commit our decisions to testing."
-  *Expect:* the model calls `ctx_stored` (which returns the commit rules), then `ctx_commit`,
-  and either reports the commit or shows the diff and asks you before calling `ctx_confirm`.
+  *Expect:* the model calls `ctx_commit` directly (no lookup first), and either reports the
+  commit or shows the diff and asks you before calling `ctx_confirm`.
   The commit result Claude reads is one line per entry; the review view still shows full items.
 - [ ] **9.4 The model never confirms without asking.** Make a contradicting decision and ask
   it to commit. *Expect:* it shows the supersede and waits for you.
@@ -290,7 +290,17 @@ basic-host (see the README's Development section):
   **Replace with this size**. Pinning a dropped item keeps it and can raise the minimum.
   Saying "pull <repo> at 800 tokens" loads directly, without waiting.
 - [ ] **9b.7b Committing does not pull.** Ask Claude to commit something to a repo with items.
-  *Expect:* Claude calls `ctx_stored` (no view appears) and then `ctx_commit`; no pull view.
+  *Expect:* Claude calls `ctx_commit` only; no pull view, no lookup.
+- [ ] **9b.7c Changes by subject.** In a chat that started from a pull, change a decision and
+  ask to commit. *Expect:* a **replaces** entry against the stored item with the same subject.
+  If Claude words the subject differently, a **possibly replaces** flag shows the stored item;
+  choose *Replace the old item* to accept it. Marking a task done works by its subject too.
+- [ ] **9b.7d Large repos.** In a repo whose recommended size is above about 4,000 tokens
+  (hundreds of items), say "Pull <repo>". *Expect:* the view offers **Where you left off**, the
+  main areas, a topic box and **Everything** (with its size); Where you left off loads only a
+  few hundred tokens plus "Also stored but not loaded…". Then ask about an item that was not
+  loaded. *Expect:* Claude calls `ctx_stored` and answers instead of saying it doesn't know.
+  On the CLI: `ctx pull` (where you left off), `ctx pull --focus "<area>"`, `ctx pull --all`.
 - [ ] **9b.8 Pin from the CLI.** `ctx pin <item>` and `ctx pin <item> --off`; `ctx items` shows ★.
 - [ ] **9b.9 Without MCP Apps.** In a client without Apps support (or the MCP Inspector), the same
   tools still return their full results as text.

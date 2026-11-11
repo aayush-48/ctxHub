@@ -13,8 +13,7 @@ from ctx_server.schemas import CommitIn, PullIn
 from test_same_question import ROAD_HAZARD
 
 # Ceilings, with ~10% headroom over the measured sizes.
-TOOL_DEFINITIONS = 1700  # measured 1,505 for the six model-visible tools
-COMMIT_RULES = 500  # loaded only when committing, via ctx_stored
+TOOL_DEFINITIONS = 1850  # six tools; saving needs no lookup, so the commit rules live here
 COMMIT_RESULT_PER_ENTRY = 25  # one line per plain "add"
 
 
@@ -41,7 +40,6 @@ async def test_tool_definitions_fit_the_budget():
         for t in tools
     }
     assert sum(sizes.values()) + tokens(mcp_server.INSTRUCTIONS) <= TOOL_DEFINITIONS, sizes
-    assert tokens(mcp_server.COMMIT_RULES) <= COMMIT_RULES
 
 
 async def test_commit_result_is_compact(alice, repo):

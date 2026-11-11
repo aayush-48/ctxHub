@@ -512,6 +512,43 @@ async def list_items(
     return {"commit": str(commit), "branch": branch, "items": [i.view() for i in items]}
 
 
+async def search_items(
+    actor: Actor, repo: str, query: str, ref: str | None = None, limit: int = 20
+) -> dict[str, Any]:
+    """Active items about a topic, best match first: words of the query found in the subject
+    or content, then closeness in meaning. Returns at most `limit` items, so the cost does not
+    grow with the size of the repo."""
+    import numpy as np
+
+    from .core.snapshot import cosine
+
+    rt = get_runtime()
+    async with session_scope() as s:
+        rc = await _authorize(s, actor, repo, "viewer")
+        branch, commit = await _ref_commit(s, actor, rc, ref)
+        snap = await load_snapshot(s, commit)
+        await ensure_subject_embeddings(s, rt.embedder, [snap])
+    active = snap.active()
+    words = [w for w in normalize_subject(query).split() if len(w) > 2]
+    [qv] = await rt.embedder.embed([query]) if active else [[]]
+    qv = np.asarray(qv) if active else None
+
+    def score(i) -> float:
+        text_ = f"{i.subject_norm} {i.content.lower()}"
+        hits = sum(w in text_ for w in words) / max(len(words), 1)
+        sem = max(cosine(qv, i.subject_embedding), cosine(qv, i.embedding)) if qv is not None else 0
+        return hits + sem
+
+    ranked = sorted(active, key=score, reverse=True)
+    picked = [i for i in ranked if score(i) >= 0.6][:limit]
+    return {
+        "commit": str(commit),
+        "branch": branch,
+        "total_active": len(active),
+        "items": [i.view() for i in picked],
+    }
+
+
 async def set_pin(actor: Actor, repo: str, item: str, pinned: bool) -> dict[str, Any]:
     """Pin or unpin an active item: a render-priority setting, not a change of state, so it
     creates no commit. Pinned items are never silently dropped from renders. The change is
@@ -1498,6 +1535,10 @@ async def pull(actor: Actor, repo: str, body: PullIn, record_use: bool = True) -
         rc = await _authorize(s, actor, repo, "viewer")
         branch, cid = await _ref_commit(s, actor, rc, body.ref)
         snap = await load_snapshot(s, cid)
+        focus_vec = None
+        if body.focus:
+            await ensure_subject_embeddings(s, rt.embedder, [snap])
+            [focus_vec] = await rt.embedder.embed([body.focus])
         warnings: list[str] = []
         if branch:
             for m in (
@@ -1530,6 +1571,9 @@ async def pull(actor: Actor, repo: str, body: PullIn, record_use: bool = True) -
             allow_drop_constraints=body.allow_drop_constraints,
             conflicts=warnings,
             ids=body.ids,
+            select="focus" if body.focus else body.mode,
+            focus=body.focus,
+            focus_vec=focus_vec,
         )
     used = result.manifest.pop("used_item_ids")
     if used and record_use:

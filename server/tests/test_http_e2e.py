@@ -277,42 +277,49 @@ async def test_full_flow_rest_and_mcp(client):
     )
     assert "pgvector" not in str(res["result"])
 
-    # Before committing, the model reads one short line per stored item.
+    # Saving needs no lookup: a later commit names the stored item by its subject.
     res = await mcp_call(
         client,
         tok["access_token"],
         "tools/call",
         {
-            "name": "ctx_stored",
-            "arguments": {"repo": "llm-context-vc", "user_request": "commit this"},
+            "name": "ctx_commit",
+            "arguments": {
+                "repo": "llm-context-vc",
+                "user_request": "Commit the switch to AlloyDB.",
+                "message": "Switch datastore",
+                "items": [
+                    {
+                        "type": "decision",
+                        "subject": "Primary datastore",
+                        "content": "Use AlloyDB for PostgreSQL.",
+                        "replaces": "Primary datastore",
+                    }
+                ],
+            },
         },
     )
-    [line] = [c["text"] for c in res["result"]["content"] if c["type"] == "text"]
-    assert "2 active items" in line and "decision | Primary datastore:" in line
-    assert "[id:" in line and "RULES FOR ctx_commit" in line
+    changed = res["result"]["structuredContent"]
+    assert changed["entries"][0].startswith("e1 refine · Primary datastore")
+    assert changed["committed"] is False  # a replacement waits for the user's review
     res = await mcp_call(
         client,
         tok["access_token"],
         "tools/call",
-        {
-            "name": "ctx_stored",
-            "arguments": {"repo": "llm-context-vc", "user_request": "save it", "rules": False},
-        },
+        {"name": "ctx_confirm", "arguments": {"proposal_id": changed["proposal_id"]}},
     )
-    assert res["result"].get("isError") is not True
+    assert res["result"]["structuredContent"]["counts"]
+
+    # ctx_stored is an optional search: only matching items, never the whole repo.
+    res = await mcp_call(
+        client,
+        tok["access_token"],
+        "tools/call",
+        {"name": "ctx_stored", "arguments": {"repo": "llm-context-vc", "query": "datastore"}},
+    )
     text = res["result"]["content"][0]["text"]
-    assert "2 active items" in text and "RULES" not in text
-    # Without a request to save, nothing is listed.
-    res = await mcp_call(
-        client,
-        tok["access_token"],
-        "tools/call",
-        {
-            "name": "ctx_stored",
-            "arguments": {"repo": "llm-context-vc", "user_request": "Riya moves to React."},
-        },
-    )
-    assert res["result"]["isError"] is True
+    assert "1 of 2 active items match 'datastore'" in text
+    assert "decision | Primary datastore: Use AlloyDB" in text and "ChatGPT" not in text
 
     # Rare operations share two tools; log is compact for the model.
     res = await mcp_call(

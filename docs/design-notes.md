@@ -46,11 +46,28 @@ their size is a cost the user pays. Measures (sizes in o200k tokens, checked in 
 
 | | Before | Now |
 |---|---|---|
-| Tool definitions per message | 4,431 (14 tools) | ~1,500 (6 tools) |
-| Rules for writing items | inside `ctx_commit`'s description, every message | ~350, returned by `ctx_stored` only when committing (`rules=false` skips them on later commits) |
+| Tool definitions per message | 4,431 (14 tools) | ~1,800 (6 tools, including the short commit rules) |
+| Saving | `ctx_stored` (every stored item, growing with the repo) then `ctx_commit` | `ctx_commit` alone, with short rules in its description; only what changed since the last save |
 | Commit result, 16 items | 1,965 | ~260: one line per entry, details only for flags, replacements and drops |
-| Pull context, 16 items | 400 | ~280: chat pulls leave out `[id:…]` tags (`ctx_stored` gives ids) |
+| Pull context, 16 items | 400 | ~300: chat pulls leave out `[id:…]` tags and start each line with the subject |
 
+- **Saving needs no lookup.** The model sends only what was decided or changed since the last
+  save (it can see its earlier commit, or the pull, in the conversation). `replaces` and
+  `updates` name stored items by subject; the server resolves the subject (exact, then a few
+  words of subject or content, then closeness in meaning at `reference_match_threshold`
+  0.85) and fails with candidates when unsure. A new item whose subject is close to a stored
+  one (`possible_replace_threshold` 0.90, below the 0.93 that links automatically) is flagged
+  "possibly replaces" with Keep both preselected. With real embeddings this raised no flags on
+  the noise suite's closely related subjects. `ctx_stored` is now an optional search
+  returning at most 20 items.
+- **Large repos are not loaded whole by default.** When the recommended size is above
+  `large_repo_tokens` (4,000), a pull loads what always matters (constraints, goals, open
+  questions, conflicts, pinned items), the `pull_recent_items` (15) most recently changed
+  items, and an index line of the rest by area; or, with a focus, the items matching it by
+  words and meaning (at most `pull_focus_items`, 60). The model looks anything else up with
+  `ctx_stored` when asked. "Everything" stays available at its real cost. Measured in
+  [benchmark-scale.md](benchmark-scale.md): 100% of answers at 2,000 facts from a 692-token
+  start, against 38,170 tokens to load everything.
 - Rare operations share two tools: `ctx_inspect` (read-only: status, log, diff) and
   `ctx_manage` (init, branch, checkout, merge, resolve, revert, pin), each with an `action` and
   an `args` object described in one line per action. The read-only one keeps its read-only

@@ -11,3 +11,7 @@ PROJECT CONTEXT: {{ repo }} / {{ branch }} @ {{ commit }}
 
 OMITTED: {{ omitted.count }} items ({{ omitted.what }})
 {% endif %}
+{% if index %}
+
+NOT LOADED: {{ index }}
+{% endif %}

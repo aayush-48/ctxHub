@@ -22,6 +22,7 @@ CLI), and from a web viewer.
 ## Contents
 
 - [How it works](#how-it-works)
+- [When to use ctx](#when-to-use-ctx)
 - [Architecture](#architecture)
 - [Repository layout](#repository-layout)
 - [Prerequisites](#prerequisites)
@@ -77,6 +78,25 @@ Claude chat ──ctx_commit──▶ pipeline ──▶ proposed diff ──you
                                                                            │
 ChatGPT chat ◀──ctx_pull (budget 3000, GPT template)───────────────────────┘
 ```
+
+## When to use ctx
+
+**Use ctx when the work will continue:** over several chats, across models, after a break, or
+with other people. Saving costs tokens once; after that every new chat starts from a small,
+current project state instead of a growing transcript, and nothing fades from one chat to
+the next.
+
+**For a quick one-off move of a short chat, pasting the chat is fine and slightly cheaper.**
+Pasting costs only the pasted text, while ctx costs a save (about 11,000 tokens on a small
+project) plus a pull. But a pasted chat is re-read on every message of the new chat, so ctx
+becomes the cheaper option after only a few messages: from about message 4 of the new chat
+at 20 facts, and about message 12 at 100 facts ([benchmark](docs/benchmark-scale.md#break-even)).
+Pasting is the better choice only when all of these hold: the chat is short, you move it
+once, the new chat will be short too, and you won't come back to it or move it again.
+
+ctx does not suggest pasting by itself: the server never sees the chat, so it cannot tell how
+long it is, and teaching the chat model to give this advice would add instruction tokens to
+every message of every chat.
 
 ## Architecture
 
@@ -194,16 +214,18 @@ Then ask the model things like:
 
 | MCP tool | Does |
 |---|---|
-| `ctx_stored` | Called before every commit: one short line per stored item (id, type, subject) plus the rules for writing items. No view |
-| `ctx_commit`, `ctx_confirm` | Propose a commit, then write it after you agree |
-| `ctx_pull` | Load the state into the chat. Without a size, the user picks one in the view first (minimum / recommended / full) and the model gets nothing until then; with `token_budget`, the context loads directly |
+| `ctx_stored` | Optional search: up to 20 stored items about a topic. Not needed before saving. No view |
+| `ctx_commit`, `ctx_confirm` | Propose a commit of what changed since the last save, then write it after you agree. `replaces` and `updates` take the stored item's subject (or id); the server matches, replaces, drops duplicates and flags conflicts, including "possibly replaces?" for a reworded subject |
+| `ctx_pull` | Load the state into the chat. Nothing loads until the user chooses in the view. A small repo loads whole at a chosen size; a large one offers **where you left off** (constraints, goals, open questions, the latest changes and an index of the rest), an **area or topic**, or **everything** at its real cost. With `token_budget` or `focus`, it loads directly. Items not loaded are looked up with `ctx_stored` when the user asks about them |
 | `ctx_inspect` (read-only) | `status`, `log`, `diff` |
 | `ctx_manage` | `init` (names are globally unique), `branch`, `checkout`, `merge`, `merge_complete`, `merge_abort`, `resolve`, `revert` (a new commit), `pin` (no commit) |
 
 **Token cost.** Everything the chat model reads is kept small, and CI checks the sizes
-(`server/tests/test_token_budget.py`). The six tool definitions total about 1,500 tokens per
-message. The rules for writing items (about 350 tokens) load only when committing, inside the
-`ctx_stored` result. Results are compact: a 16-item commit comes back in about 260 tokens, one
+(`server/tests/test_token_budget.py`). The six tool definitions total about 1,800 tokens per
+message. Saving is one call: the model sends only what changed since the last save, naming
+stored items by subject, and the server does the matching, so a save costs the same with 20
+or 2,000 stored items. Pulls start each line with the item's subject so it can be reused.
+Results are compact: a 16-item commit comes back in about 260 tokens, one
 line per entry. Chat pulls leave out item ids. The in-chat views fetch full data through
 view-only helpers the model never sees.
 
@@ -219,7 +241,7 @@ In clients that support [MCP Apps](https://modelcontextprotocol.io/specification
 | History | `ctx_inspect` log | Commit graph with branches and merges; click a commit for its diff and pipeline decisions |
 | Diff | `ctx_inspect` diff | Changes between two refs; pick other refs to compare |
 | Conflict resolver | `ctx_manage` merge / resolve | Original, this branch and incoming side by side; keep either, both, or edit; complete or abort |
-| Pull and budget | `ctx_pull` | Slider from **Minimum** (constraints and pinned items) through **Recommended** (every item, shortened where possible) to **Full**; live preview of what is kept, shortened or dropped; pin/unpin; **Load into chat** sends the chosen size |
+| Pull and budget | `ctx_pull` | Small repos: slider from **Minimum** (constraints and pinned items) through **Recommended** (every item, shortened where possible) to **Full**. Large repos: **Where you left off**, the main areas, a topic box, or **Everything**. Live preview of what is kept, shortened, dropped or not loaded; pin/unpin; **Load into chat** sends the choice |
 
 Every button calls the same tools, so the model stays informed: the view also tells the model what
 you decided. Clients without MCP Apps get the same results as text.
@@ -340,10 +362,20 @@ push.
 
 ## Evaluation
 
+**Handoffs as a project grows:** [docs/benchmark-scale.md](docs/benchmark-scale.md) measures one
+handoff at 20, 100, 500 and 2,000 facts. ctx's default pull answered 100% of questions at every
+size, while a pasted summary fell from 72% to 26%; from 500 facts ctx costs about half as much
+per correct answer as the summary ($0.0112 against $0.0290 at 2,000 facts), and its next chat
+starts from under 700 tokens where loading everything would carry 38,000. Over all four sizes,
+ctx's default used 285,362 tokens for 130 of 130 correct answers, the summary 185,123 for 71,
+and the full transcript 823,503 for 130.
+
 **Continuing a project across chats:** [docs/benchmark-handoff-chain.md](docs/benchmark-handoff-chain.md)
 covers a 5-chat planning project handed over by summary, by ctx and by full transcript. After
-four handoffs, the summary method answered 50% of questions correctly, ctx 88% and the full
-transcript 91%. ctx used 1.9× the summary's tokens and 30% fewer than the full transcript.
+four handoffs, the summary method answered 50% of questions correctly, ctx 86% and the full
+transcript 91%. Facts from the first chat faded out of the summary chain (4 of 8 left) but
+not out of ctx (8 of 8). ctx used 1.4× the summary's tokens and 46% fewer than the full
+transcript.
 
 ```bash
 uv run python -m evals.run                          # offline: pipeline + noise + merge

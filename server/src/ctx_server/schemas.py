@@ -33,7 +33,7 @@ class ItemIn(_Strict):
     pinned: bool = Field(default=False, description="Never drop this item from renders.")
     replaces: str | None = Field(
         default=None,
-        description="item_key (or unique prefix) of an active item this explicitly replaces.",
+        description="The stored item this replaces: its subject, or its id (or a unique prefix).",
     )
     attributes: dict[str, Any] = Field(default_factory=dict)
 
@@ -66,7 +66,7 @@ class ItemIn(_Strict):
 
 
 class StatusUpdateIn(_Strict):
-    item: str = Field(description="item_key, item id, or a unique prefix of either.")
+    item: str = Field(description="The stored item: its subject, or its id (or a unique prefix).")
     status: Literal["resolved", "retracted"]
     note: str | None = Field(default=None, max_length=500)
 
@@ -148,6 +148,11 @@ class PullIn(_Strict):
     # [id:xxxxxxxx] after each item, for models that will edit the repo (ctx_stored gives
     # them too); left out of chat pulls to save tokens.
     ids: bool = True
+    # "auto": a small repo loads whole, a large one "where you left off" unless a budget is
+    # given; "all": everything that fits the budget; "starter": what always matters plus the
+    # latest changes. A focus loads those plus the items that match it.
+    mode: Literal["auto", "all", "starter"] = "auto"
+    focus: str | None = Field(default=None, max_length=300)
     allow_drop_constraints: bool = False
 
 

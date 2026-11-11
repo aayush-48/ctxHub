@@ -137,6 +137,52 @@ def find_item(snapshot: Snapshot, ref: str, *, active_only: bool = True) -> Snap
     return next(iter(matches.values()))
 
 
+_HEX_REF = re.compile(r"[0-9a-f-]{6,}")
+
+
+def is_id_ref(ref: str) -> bool:
+    return bool(_HEX_REF.fullmatch(ref.strip().lower()))
+
+
+def find_by_subject(
+    settings: Settings, snapshot: Snapshot, ref: str, ref_embedding: Any
+) -> SnapItem:
+    """Find the active item a model means by a subject (or a few words of it): the exact
+    subject, else the only subject or content containing it, else the closest subject by
+    meaning. Ambiguous or weak matches fail with the candidates, so nothing is guessed."""
+    norm = normalize_subject(ref)
+    active = snapshot.active()
+    exact = [a for a in active if a.subject_norm == norm]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise ValidationFailed(
+            f"{ref!r} matches {len(exact)} items; give the id (from a pull) or more words"
+        )
+    words = [a for a in active if norm and (norm in a.subject_norm or norm in a.content.lower())]
+    if len(words) == 1:
+        return words[0]
+    if ref_embedding is not None:
+        rv = np.asarray(ref_embedding)
+        scored = sorted(
+            (
+                (max(cosine(rv, a.subject_embedding), cosine(rv, a.embedding)), a)
+                for a in (words or active)
+            ),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        if scored and scored[0][0] >= settings.reference_match_threshold:
+            if len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.02:
+                return scored[0][1]
+    candidates = ", ".join(f"'{a.subject}'" for a in (words or [])[:5])
+    raise ValidationFailed(
+        f"no stored item clearly matches {ref!r}"
+        + (f" (candidates: {candidates})" if candidates else "")
+        + "; use the subject as shown in the pull, or send it as a new item"
+    )
+
+
 def _view(item: NewItem) -> ItemView:
     return ItemView(type=item.type, subject=item.subject, content=item.content, reason=item.reason)
 
@@ -160,19 +206,32 @@ async def run_pipeline(
     def event(stage: str, decision: str, **details: Any) -> None:
         audit.append({"stage": stage, "decision": decision, "details": details})
 
-    # -- Resolve explicit references first, so bad references fail fast with field errors.
+    # -- Resolve explicit references first (an id, or the subject of a stored item), so bad
+    # references fail fast with field errors the model can act on.
+    refs = [it.replaces for it in items if it.replaces and not is_id_ref(it.replaces)]
+    refs += [up.item for up in updates if not is_id_ref(up.item)]
+    ref_vecs: dict[str, Any] = {}
+    if refs:
+        uniq = sorted(set(refs))
+        ref_vecs = dict(zip(uniq, await deps.embedder.embed(uniq), strict=True))
+
+    def resolve(ref: str) -> SnapItem:
+        if is_id_ref(ref):
+            return find_item(snapshot, ref)
+        return find_by_subject(s, snapshot, ref, ref_vecs.get(ref))
+
     errors: list[dict[str, str]] = []
     replace_targets: dict[int, SnapItem] = {}
     for i, it in enumerate(items):
         if it.replaces:
             try:
-                replace_targets[i] = find_item(snapshot, it.replaces)
+                replace_targets[i] = resolve(it.replaces)
             except ValidationFailed as e:
                 errors.append({"field": f"items.{i}.replaces", "error": e.message})
     status_targets: list[SnapItem] = []
     for i, up in enumerate(updates):
         try:
-            status_targets.append(find_item(snapshot, up.item))
+            status_targets.append(resolve(up.item))
         except ValidationFailed as e:
             errors.append({"field": f"updates.{i}.item", "error": e.message})
     if errors:
@@ -292,6 +351,28 @@ async def run_pipeline(
                 scored.append((c, sim, same_subject))
         if w.entry is not None:
             continue
+        if not any(same for _, _, same in scored) and sv is not None:
+            # The model no longer sees stored subjects before saving, so a change may arrive
+            # under a reworded subject. A close stored subject is shown for the user to
+            # confirm; nothing is replaced unless they choose it.
+            near = [
+                (cosine(sv, c.subject_embedding), c)
+                for c in pool
+                if c.snap is not None and c.subject_embedding is not None
+            ]
+            near = [(x, c) for x, c in near if x >= s.possible_replace_threshold]
+            if near:
+                x, c = max(near, key=lambda t: t[0])
+                w.entry = {
+                    "action": "flag",
+                    "target": c.target(),
+                    "relation": "possible_replace",
+                    "confidence": round(x, 3),
+                    "default_choice": "keep_both",
+                    "reason": f"similar subject '{c.view.subject}': does this replace it?",
+                }
+                event("classify", "possible_replace", entry=w.eid, target=c.target())
+                continue
         scored.sort(key=lambda x: (x[2], x[1]), reverse=True)
         pairs += [(w, c, sim, same) for c, sim, same in scored[:3]]
 

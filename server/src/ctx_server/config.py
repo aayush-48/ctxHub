@@ -61,10 +61,21 @@ class Settings(BaseSettings):
     # question. Measured: rewordings ("Auth provider"/"Authentication provider") 0.93-0.99;
     # different questions in one project ("Detection model"/"Detection head") up to 0.92.
     same_subject_threshold: float = 0.93
+    # Subjects this close (but below the threshold above) are flagged "possibly replaces"
+    # for the user to confirm, instead of being linked or silently added side by side.
+    possible_replace_threshold: float = 0.90
+    # How close a subject given in `replaces` / `updates` must be to a stored item's.
+    reference_match_threshold: float = 0.85
     # The NLI model is only trusted on short statements; longer items skip it.
     nli_max_words: int = 40
     max_items_per_commit: int = 50
     max_subject_chars: int = 60
+    # Pulls: a repo whose recommended size is above this is "large" and is not loaded whole
+    # unless the user asks for everything; it loads a focus or "where you left off".
+    large_repo_tokens: int = 4000
+    focus_pull_budget: int = 4000  # default size of a focused or where-you-left-off pull
+    pull_recent_items: int = 15  # most recently changed items always included in those
+    pull_focus_items: int = 60  # at most this many items matched by the focus
     max_content_chars: int = 300  # about two sentences: one fact per item
     proposal_ttl_s: int = 24 * 3600
 

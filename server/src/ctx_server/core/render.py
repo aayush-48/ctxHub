@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ..config import Settings
 from ..errors import ValidationFailed
 from ..providers.tokenizers import TokenCounter, target_family
 from .items import importance
-from .snapshot import SnapItem, Snapshot
+from .snapshot import SnapItem, Snapshot, cosine
 from .text import truncate_words
 
 SECTIONS = [
@@ -116,16 +118,96 @@ def _item_lines(settings: Settings, snap: Snapshot, ids: bool = True) -> list[_L
             full += f" (replaces: {_flat(old.compressed or old.content)})"
             if short:
                 short += f" (was: {truncate_words(_flat(old.compressed or old.content), 60)})"
+        # The subject leads each line: a model saving later changes reuses it, so the server
+        # can match the change to this item without the model looking anything up.
+        label = f"{_flat(i.subject)}: "
         lines.append(
             _Line(
                 kind=i.type,
                 importance=imp,
-                full=full + tag,
-                short=(short + tag) if short else None,
+                full=label + full + tag,
+                short=(label + short + tag) if short else None,
                 item=i,
             )
         )
     return lines
+
+
+_ALWAYS = {"constraint", "goal", "conflict", "open_question"}
+_STOP = {"the", "a", "an", "of", "for", "and", "to", "in", "on", "with", "our", "is", "we"}
+
+
+def _words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 2 and w not in _STOP}
+
+
+def _select(
+    settings: Settings, lines: list[_Line], focus: str | None, focus_vec: Any
+) -> tuple[list[_Line], list[_Line]]:
+    """Order a focused or where-you-left-off pull, most important first: what always matters
+    (constraints, goals, conflicts, open questions, pinned items), the latest changes, then
+    the items that match the focus. Everything else is not loaded."""
+    always = [ln for ln in lines if ln.kind in _ALWAYS or (ln.item is not None and ln.item.pinned)]
+    rest = [ln for ln in lines if ln not in always]
+    recent = sorted(
+        (ln for ln in rest if ln.item is not None),
+        key=lambda ln: ln.item.created_at,  # type: ignore[union-attr]
+        reverse=True,
+    )[: settings.pull_recent_items]
+    matched: list[_Line] = []
+    if focus:
+        want = _words(focus)
+        fv = np.asarray(focus_vec) if focus_vec is not None else None
+        scored = []
+        for ln in rest:
+            if ln.item is None or ln in recent:
+                continue
+            it = ln.item
+            hits = len(want & _words(f"{it.subject} {it.content}")) / max(len(want), 1)
+            sem = (
+                max(cosine(fv, it.subject_embedding), cosine(fv, it.embedding))
+                if fv is not None
+                else 0.0
+            )
+            if hits + sem >= 0.6:
+                scored.append((hits + sem, ln))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        matched = [ln for _, ln in scored[: settings.pull_focus_items]]
+    chosen = always + recent + matched
+    picked = set(map(id, chosen))
+    return chosen, [ln for ln in lines if id(ln) not in picked]
+
+
+def _area(subject: str) -> str:
+    """The area an item belongs to: its subject without the last word ("Amber Falcon database"
+    -> "Amber Falcon"), or the subject itself when it is short."""
+    words = subject.split()
+    return " ".join(words[:-1]) if len(words) >= 3 else subject
+
+
+def areas(lines: list[_Line], limit: int = 12) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for ln in lines:
+        if ln.item is not None:
+            a = _area(ln.item.subject)
+            counts[a] = counts.get(a, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [{"label": a, "items": n} for a, n in top if n > 1][:limit]
+
+
+def _index_text(not_loaded: list[_Line]) -> str:
+    items = [ln for ln in not_loaded if ln.item is not None]
+    kinds: dict[str, int] = {}
+    for ln in items:
+        kinds[ln.kind] = kinds.get(ln.kind, 0) + 1
+    by_kind = ", ".join(f"{n} {k.replace('_', ' ')}s" for k, n in sorted(kinds.items()))
+    top = areas(items, 8)
+    where = "; areas: " + ", ".join(f"{a['label']} ({a['items']})" for a in top) if top else ""
+    return (
+        f"Also stored but not loaded: {len(items)} items ({by_kind}){where}. When the user asks "
+        "about any of them, call ctx_stored with the topic before answering; do not answer "
+        "that it is unknown."
+    )
 
 
 async def render(
@@ -141,7 +223,13 @@ async def render(
     allow_drop_constraints: bool = False,
     conflicts: list[str] | None = None,
     ids: bool = True,
+    select: str = "auto",
+    focus: str | None = None,
+    focus_vec: Any = None,
 ) -> RenderResult:
+    """`select`: "all" packs every item into the budget; "starter" loads what always matters
+    plus the latest changes ("where you left off"); "focus" adds the items that match `focus`.
+    In those two, items not loaded are summarized in an index instead of listed."""
     tmpl_name = _template_name(template, model)
     family = target_family(model)  # tokens are counted for the target model, whatever template
     tmpl = _env.get_template(f"{tmpl_name}.j2")
@@ -151,6 +239,9 @@ async def render(
     for c in conflicts or []:
         lines.append(_Line(kind="conflict", importance=1.0, full=_flat(c), short=None))
     lines.sort(key=lambda ln: (TIER[ln.kind], -ln.importance))
+    all_lines = list(lines)
+    not_loaded: list[_Line] = []
+    index: str | None = None
 
     def build(selected: list[_Line], dropped: list[_Line]) -> str:
         sections = []
@@ -176,6 +267,7 @@ async def render(
                 commit=snap.commit_id.hex[:8],
                 sections=sections,
                 omitted=omitted,
+                index=esc(index) if index else None,
             ).strip()
             + "\n"
         )
@@ -186,25 +278,44 @@ async def render(
     def cost(text: str) -> int:
         return counter.estimate(esc(text), family) + 4
 
-    full_costs = [cost(ln.full) for ln in lines]
-    min_costs = [cost(ln.short) if ln.short else c for ln, c in zip(lines, full_costs, strict=True)]
-
     def budget_for(total: int) -> int:
         # The smallest budget whose packing limit fits `total` item tokens after the header.
         return math.ceil((header_cost + total) / margin) + 1
 
+    # Sizes always describe the whole repo, so the view can offer "everything" at its real cost.
+    all_full = [cost(ln.full) for ln in all_lines]
+    all_min = [cost(ln.short) if ln.short else c for ln, c in zip(all_lines, all_full, strict=True)]
     sizes = {
         # Constraints and pinned items, shortened: below this a render would lose them.
         "minimum": budget_for(
-            sum(c for ln, c in zip(lines, min_costs, strict=True) if ln.protected)
+            sum(c for ln, c in zip(all_lines, all_min, strict=True) if ln.protected)
         ),
         # Every item, shortened where it has a short form: nothing is dropped.
-        "recommended": budget_for(sum(min_costs)),
+        "recommended": budget_for(sum(all_min)),
         # Every item in full: a larger budget adds nothing.
-        "full": budget_for(sum(full_costs)),
+        "full": budget_for(sum(all_full)),
     }
+    if select == "auto":
+        # A small repo loads whole; a large one loads "where you left off" unless a size is
+        # asked for (the size is the user's choice, including everything).
+        large = sizes["recommended"] > settings.large_repo_tokens
+        select = "starter" if large and budget is None else "all"
+    if select in ("starter", "focus"):
+        lines, not_loaded = _select(
+            settings, lines, focus if select == "focus" else None, focus_vec
+        )
+        index = _index_text(not_loaded) if not_loaded else None
+        header_cost = counter.estimate(build([], []), family)  # now including the index line
+    full_costs = [cost(ln.full) for ln in lines]
+    min_costs = [cost(ln.short) if ln.short else c for ln, c in zip(lines, full_costs, strict=True)]
+    if select != "all":
+        sizes["selection"] = budget_for(sum(min_costs))
     if budget is None:
-        budget = sizes["recommended"]
+        budget = (
+            sizes["recommended"]
+            if select == "all"
+            else min(sizes["selection"], settings.focus_pull_budget)
+        )
 
     # Pass 1, in priority order: give every item its shortest form while it fits, so items are
     # shortened before anything is dropped. Pass 2: spend what is left on full forms, again in
@@ -288,6 +399,12 @@ async def render(
         "tokens": tokens,
         "budget": budget,
         "sizes": sizes,
+        "large": sizes["recommended"] > settings.large_repo_tokens,
+        "mode": select,
+        "focus": focus if select == "focus" else None,
+        "not_loaded": len(not_loaded),
+        # Main areas of the repo, offered as focus options for large repos.
+        "areas": areas([ln for ln in all_lines if ln.item is not None]),
         "included": len(selected),
         "compressed": [ref(ln) for ln in selected if ln.form == "compressed"],
         "dropped": [ref(ln) for ln in dropped],

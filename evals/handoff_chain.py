@@ -165,11 +165,11 @@ class CtxHost:
         from mcp.server.auth.provider import AccessToken
 
         self.mcp = mcp
-        auth_context_var.set(
-            AuthenticatedUser(
-                AccessToken(token="bench", client_id="bench", scopes=[SCOPE], subject=str(uid))
-            )
+        self._user = AuthenticatedUser(
+            AccessToken(token="bench", client_id="bench", scopes=[SCOPE], subject=str(uid))
         )
+        self._var = auth_context_var
+        auth_context_var.set(self._user)
 
     async def declarations(self):
         from google.genai import types
@@ -189,6 +189,7 @@ class CtxHost:
         return [types.Tool(function_declarations=decls)]
 
     async def call(self, name: str, args: dict[str, Any]) -> tuple[str, bool]:
+        self._var.set(self._user)  # several hosts (users) can share one process
         try:
             r = await self.mcp.call_tool(name, args)
         except Exception as e:  # ToolError and friends: the model sees the message

@@ -611,8 +611,15 @@ def pull(
     copy: Annotated[bool, typer.Option(help="Copy to the clipboard.")] = False,
     output: Annotated[Path | None, typer.Option("-o")] = None,
     allow_drop_constraints: bool = False,
+    focus: Annotated[
+        str | None, typer.Option(help="Load a topic from a large repo, e.g. 'payments'.")
+    ] = None,
+    everything: Annotated[
+        bool, typer.Option("--all", help="Load everything, even from a large repo.")
+    ] = False,
 ) -> None:
-    """Render the state for a model within a token budget."""
+    """Render the state for a model. A small repo loads whole; a large one loads where you left
+    off, unless you give --focus, --all or --budget."""
     c = _client()
     r = c.post(
         f"/repos/{_repo(c)}/pull",
@@ -621,6 +628,8 @@ def pull(
             "model": model,
             "budget": budget,
             "allow_drop_constraints": allow_drop_constraints,
+            "focus": focus,
+            "mode": "all" if everything else "auto",
         },
     )
     if output:
@@ -643,6 +652,12 @@ def pull(
         err.print(
             f"[dim]sizes: minimum {sizes['minimum']} · recommended {sizes['recommended']} · "
             f"full {sizes['full']} (choose with --budget)[/dim]"
+        )
+    if m.get("not_loaded"):
+        areas = ", ".join(a["label"] for a in m.get("areas", [])[:6])
+        err.print(
+            f"[dim]{m['mode']}: {m['not_loaded']} items not loaded. Load an area with --focus "
+            f"({areas}) or everything with --all[/dim]"
         )
 
 

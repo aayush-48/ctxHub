@@ -10,4 +10,7 @@
 {% if omitted %}
 <omitted count="{{ omitted.count }}">{{ omitted.what }}</omitted>
 {% endif %}
+{% if index %}
+<not_loaded>{{ index }}</not_loaded>
+{% endif %}
 </context>
