@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
         await dispose_engine()
 
     app = FastAPI(
-        title="ctx API",
+        title="ctxHub API",
         version="0.1.0",
         description="Git-style version control for LLM conversation task state.",
         lifespan=lifespan,

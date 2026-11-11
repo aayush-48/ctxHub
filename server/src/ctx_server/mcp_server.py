@@ -271,7 +271,7 @@ def build_mcp(settings: Settings) -> MCPServer:
         APP_URI,
         APP_HTML.read_text(encoding="utf-8") if APP_HTML.exists() else _APP_MISSING,
         name="ctx",
-        title="ctx",
+        title="ctxHub",
         description="Commit review, status, history, diffs, conflict resolution and pulls.",
         permissions=ResourcePermissions(clipboard_write={}),
         prefers_border=True,
@@ -583,7 +583,7 @@ def build_mcp(settings: Settings) -> MCPServer:
 
     mcp = MCPServer(
         name="ctx",
-        title="ctx: version control for LLM context",
+        title="ctxHub: Version-Controlled Context Management Infrastructure for AI Agents",
         instructions=INSTRUCTIONS,
         version="0.1.0",
         website_url=base,

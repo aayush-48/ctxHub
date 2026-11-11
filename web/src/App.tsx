@@ -68,8 +68,8 @@ function Shell(props: { email?: string; onHome?: () => void; children: React.Rea
   return (
     <div className="shell">
       <header className="top">
-        <button className="brand" onClick={props.onHome}>ctx</button>
-        <span className="tag">version control for LLM context</span>
+        <button className="brand" onClick={props.onHome}>ctxHub</button>
+        <span className="tag">Version-controlled context management for AI agents</span>
         <span className="spacer" />
         {props.email && <>
           <span className="who">{props.email}</span>

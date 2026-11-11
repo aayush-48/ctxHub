@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Allow access · ctx{% endblock %}
+{% block title %}Allow access · ctxHub{% endblock %}
 {% block body %}
 <h1>Allow {{ client_name }}?</h1>
-<p>It will be able to read and change the ctx repositories you can access, as
+<p>It will be able to read and change the ctxHub repositories you can access, as
 <strong>{{ user.email }}</strong>. You'll be sent back to <strong>{{ redirect_host }}</strong>.</p>
 <form method="post" action="/consent">
   <input type="hidden" name="req" value="{{ req }}">

@@ -27,7 +27,7 @@ function useAction(app: App) {
 function Header({ title, sub }: { title: string; sub?: React.ReactNode }) {
   return (
     <header className="head">
-      <span className="brand">ctx</span>
+      <span className="brand">ctxHub</span>
       <strong>{title}</strong>
       {sub && <span className="muted">{sub}</span>}
     </header>

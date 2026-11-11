@@ -1,7 +1,7 @@
 [project]
 name = "ctx-server"
 version = "0.1.0"
-description = "Git-style version control for LLM conversation task state: server (REST API + MCP)"
+description = "ctxHub: Version-Controlled Context Management Infrastructure for AI Agents: server (REST API + MCP)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

@@ -1,7 +1,7 @@
-# ctx: git for LLM context
+# ctxHub: Version-Controlled Context Management Infrastructure for AI Agents
 
-ctx gives LLM conversations git-style version control. Instead of saving raw chat turns, it
-stores the **task state** of the work, as typed items:
+ctxHub gives AI agents and LLM conversations git-style version control. Instead of saving raw
+chat turns, it stores the **task state** of the work, as typed items:
 
 | Type | Example |
 |---|---|
@@ -18,6 +18,9 @@ another chat or model within a token budget.
 
 People use it from the chat apps they already have (through MCP), from a terminal (the `ctx`
 CLI), and from a web viewer.
+
+**Live service:** <https://ctx-910037083701.asia-south1.run.app> (in this document, "ctx" refers
+to the service and its `ctx` CLI).
 
 ## Contents
 
@@ -37,7 +40,6 @@ CLI), and from a web viewer.
 - [Evaluation](#evaluation)
 - [Security and privacy](#security-and-privacy)
 - [Troubleshooting](#troubleshooting)
-- [Status and roadmap](#status-and-roadmap)
 
 ## How it works
 
@@ -139,19 +141,34 @@ Studio key, local sentence-transformers, or offline fakes for tests.
 ## Repository layout
 
 ```
-server/      FastAPI app: REST API, MCP server, OAuth server, pipeline, merge, renderer
-  src/ctx_server/core/        version engine: pipeline, relation rules, merge, render, graph
-  src/ctx_server/providers/   embeddings, local NLI model, tokenizers, retries
-  src/ctx_server/auth/        OAuth provider and sign-in pages
-  src/ctx_server/migrations/  database schema (Alembic)
-  tests/                      unit, database and HTTP end-to-end tests
-cli/         `ctx` command-line client
-web/         web viewer (built into the server image)
-infra/       Terraform for Google Cloud
-evals/       benchmarks: pipeline, merge, handoff fidelity
-examples/    sample item files used in the guides
-docs/        deployment guide and design notes
+ctxHub/
+├── server/                      FastAPI service: REST API, MCP server, OAuth server
+│   ├── src/ctx_server/
+│   │   ├── core/                version engine: pipeline, relation rules, merge, render, graph
+│   │   ├── providers/           embeddings, local NLI model, tokenizers, retries
+│   │   ├── auth/                OAuth provider and sign-in
+│   │   ├── migrations/          database schema (Alembic)
+│   │   ├── templates/           pull formats (Claude, GPT, plain) and sign-in pages
+│   │   ├── mcp_server.py        the six MCP tools and the in-chat views
+│   │   ├── api.py               REST endpoints
+│   │   └── service.py           the shared service layer behind MCP, REST and the CLI
+│   └── tests/                   unit, database, HTTP end-to-end and token-budget tests
+├── cli/                         the `ctx` command-line client
+├── web/                         web viewer and in-chat views (built into the server image)
+├── infra/                       Terraform for Google Cloud
+├── evals/                       benchmarks: pipeline, merge, noise, handoff chain, scale
+├── examples/                    sample item files used in the guides
+└── docs/                        guides, design notes and benchmark reports
 ```
+
+| Document | What it covers |
+|---|---|
+| [docs/deploy-gcp.md](docs/deploy-gcp.md) | Deploying your own instance on Google Cloud |
+| [docs/testing-guide.md](docs/testing-guide.md) | Testing every feature by hand: CLI, chat apps, in-chat views, web viewer |
+| [docs/design-notes.md](docs/design-notes.md) | Design decisions, token economy, and deviations from the design document |
+| [docs/benchmark-handoff-chain.md](docs/benchmark-handoff-chain.md) | One project over five chats: accuracy, context decay, tokens |
+| [docs/benchmark-scale.md](docs/benchmark-scale.md) | One handoff at 20 to 2,000 facts: tokens, accuracy, cost, break-even |
+| [docs/real-chat-handoff-test.md](docs/real-chat-handoff-test.md) | A manual comparison to run in claude.ai |
 
 ## Prerequisites
 
@@ -256,7 +273,7 @@ Install it from this repository:
 ```bash
 pipx install "git+https://github.com/aayush-48/ctxHub.git#subdirectory=cli"
 # or, from a clone: uv tool install ./cli
-ctx login https://<your-service>
+ctx login https://ctx-910037083701.asia-south1.run.app
 ```
 
 | Command | Does |
@@ -297,7 +314,7 @@ four tabs:
 ## REST API
 
 The CLI and the viewer use a REST API under `/api/v1`. Browse it interactively at
-`https://<your-service>/api/docs`. Every request needs `Authorization: Bearer <token>`, which
+`https://ctx-910037083701.asia-south1.run.app/api/docs`. Every request needs `Authorization: Bearer <token>`, which
 `ctx login` stores in your CLI config.
 
 ## Configuration
@@ -435,17 +452,6 @@ scenarios are on the roadmap.
 
 More detail: [docs/design-notes.md](docs/design-notes.md) covers decisions and deviations from
 the design document.
-
-## Status and roadmap
-
-**Working today:** typed commits with the cleaning pipeline, diff and confirm, branch, semantic
-merge with conflict resolution, revert, budgeted cross-model pull, multi-user
-roles, MCP for Claude and ChatGPT, CLI, web viewer, deployment on GCP, CI and evals.
-
-**Next:**
-- Longer, multi-session handoff benchmarks.
-- Resolving merge conflicts from the web viewer.
-- An optional free-tier deployment (Neon + Hugging Face Spaces + Gemini API key).
 
 ---
 

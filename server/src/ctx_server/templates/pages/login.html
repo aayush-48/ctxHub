@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Sign in · ctx{% endblock %}
+{% block title %}Sign in · ctxHub{% endblock %}
 {% block body %}
 <h1>Sign in</h1>
-<p>{{ client_name }} wants to use your ctx repositories.</p>
+<p>{{ client_name }} wants to use your ctxHub repositories.</p>
 {% if google %}<a class="btn" href="/auth/google/start?req={{ req | urlencode }}">Continue with Google</a>{% endif %}
 {% if github %}<a class="btn" href="/auth/github/start?req={{ req | urlencode }}">Continue with GitHub</a>{% endif %}
 {% if not google and not github and not dev_login %}

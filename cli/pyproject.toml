@@ -1,7 +1,7 @@
 [project]
 name = "ctx-cli"
 version = "0.1.0"
-description = "Command-line client for ctx: git-style version control for LLM context"
+description = "Command-line client for ctxHub: version-controlled context management for AI agents"
 requires-python = ">=3.10"
 dependencies = [
     "typer>=0.12",
